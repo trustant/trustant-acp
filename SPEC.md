@@ -1,0 +1,472 @@
+# trustable-acp — Standalone ACP Client Specification
+
+## 1. Goal
+
+`trustable-acp` is a **standalone Agent Client Protocol (ACP) client** that:
+
+1. Runs as a **local Node server** + **browser React UI** — no editor host required.
+2. Launches Claude Code, Codex, Pi, and any custom ACP agent as subprocesses.
+3. Keeps all configuration in a single **`config.json`** file (env-var references for secrets — no keychain).
+
+Non-goals: mobile support; reusing any external editor's markdown/theme engines.
+
+## 2. Architecture overview
+
+The codebase is cleanly layered. ACP protocol handling is confined to `src/acp/`, business logic to `src/services/` and `src/hooks/`, and interface **ports** decouple the UI from the runtime (`ISettingsAccess`, `IVaultAccess`, `IChatViewHost`, `IChatViewContainer`). Agent events flow through a single `onSessionUpdate` channel.
+
+**Responsibilities split across the two processes:**
+
+| Concern | Module | Standalone mechanism |
+|---|---|---|
+| Server bootstrap | `server/index.ts`, `main.ts` | Node server bootstrap + browser app bootstrap |
+| Views | `ChatView.tsx`, `SessionManagerView.tsx`, Modals | Browser routes / React modals |
+| Settings UI | `SettingsTab.ts` | React settings form over `config.json` |
+| Secrets | `acp-client.ts` | `process.env` (`.env` file) |
+| Settings persistence | `settings-service.ts` | JSON file read/write |
+| Session files | `session-storage.ts` | Node `fs` (server) |
+| Chat export | `chat-exporter.ts` | Node `fs` (server) |
+| cwd source | `ChatPanel.tsx` | user-chosen project dir / `process.cwd()` (see §10e) |
+| Markdown | `MarkdownRenderer.tsx` | `react-markdown` + remark plugins |
+| OS detection | `platform.ts`, `paths.ts`, others | `process.platform` |
+| Icons | ~10 components | `lucide-react` |
+| Toasts / menus | several | React toast / menu components |
+| Networking | `update-checker.ts` | `fetch` |
+| @-mentions | `vault-service.ts` | fs walk + fuzzy over cwd |
+| Styling | `styles.css` | ~30 design tokens in `:root` (light+dark) |
+
+**Portable core (framework-agnostic):** `acp/type-converter.ts`, `acp/acp-handler.ts`, `acp/permission-handler.ts`; all of `types/`; pure `services/` (`message-state`, `message-sender`, `session-state`, `session-helpers`, `settings-normalizer`, `view-registry`); most `hooks/`; pure React (`PermissionBanner`, `TerminalBlock`, `SuggestionPopup`); `utils/logger`, `utils/text`.
+
+## 3. Target architecture
+
+Two processes, one repo (monorepo or two build targets):
+
+```
+┌────────────────────────────┐         ┌─────────────────────────────────────┐
+│  Browser (React UI)        │  WS +   │  Node server (localhost:PORT)        │
+│                            │  REST   │                                      │
+│  ChatPanel + ui/*          │◄───────►│  transport (ws/http)                 │
+│  hooks/*                   │         │  ─ AcpClient  ─ TerminalManager      │
+│  onSessionUpdate consumer  │         │  ─ SessionStorage (fs)               │
+│  react-markdown renderer   │         │  ─ chat-exporter (fs)                │
+│  design-token stylesheet   │         │  ─ mention file reads (fs)           │
+│                            │         │  ─ config.json load/save             │
+└────────────────────────────┘         │  spawns → claude/codex/pi            │
+                                        └─────────────────────────────────────┘
+```
+
+- **Server owns all Node-only capabilities**: `child_process.spawn` (agents + terminals), `fs` (sessions, export, mentions), `config.json` I/O, env/secret resolution, WSL/Windows PATH logic (`platform.ts`, `paths.ts`).
+- **Browser owns rendering only**: React UI, markdown, styling. No `child_process`, no `fs`.
+- **Transport**: one **WebSocket** carries the streaming `session/update` events (the existing single `onSessionUpdate` channel serializes cleanly to WS messages) and permission/terminal requests; **REST** endpoints handle request/response calls (`initialize`, `newSession`, `sendPrompt`, `listSessions`, `loadSession`, `resumeSession`, `forkSession`, `setSessionConfigOption`, `cancel`, config get/save, session history get/delete, export).
+- **Client-side transport shim** implements the same surface the UI expects today (an `AcpClient`-shaped facade) so `hooks/*` and `ChatPanel` change minimally — they call methods that now issue REST/WS instead of touching an in-process `AcpClient`.
+
+### 3.1 Directory layout (proposed)
+
+```
+server/                  # Node
+  index.ts               # http + ws server, --dir/--config/--cli, 0.0.0.0 bind, embedded web (§10a)
+  acp-host.ts            # buildRuntime/buildAgentConfig → AcpClient inputs
+  session-host.ts        # owns an AcpClient per agent, wires onSessionUpdate → ws
+  session-store.ts       # saved-session metadata + message files (.acp-data)
+  routes.ts              # REST handlers
+  protocol.ts            # REST/WS request/response types
+  config-store.ts        # config.json load/save + DEFAULT_CONFIG (agent defs)
+  secrets.ts             # .env → process.env
+  pi-config.ts           # pi: models.json custom provider + hello probe (§10d)
+  codex-login.ts         # codex: login status + device-code auth (§10d)
+  claude-login.ts        # claude: login status + paste-code OAuth (§10d)
+  web-bundle.generated.ts # embedded dist-web/ (generated by esbuild.web.mjs)
+src/acp/                 # portable ACP core (AcpClient, handler, converters)
+web/                     # browser bundle: index.html, ChatApp.tsx, transport.ts, styles.css
+config.json              # user config (see §5)
+.env                     # secret values (gitignored)
+```
+
+Shared pure modules (`types/`, `settings-normalizer`, `session-helpers`, `message-*`) are imported by both sides.
+
+## 4. Agent launching (unchanged core)
+
+Agent spawn logic in `acp/acp-client.ts` + `utils/platform.ts` is kept; only the injected dependencies change:
+
+- **command / args / env**: from `config.json` agent entry (see §5).
+- **API key**: resolved from `process.env[envVarName]` (was `secretStorage`), injected into the agent's env under the mapped variable — Claude→`ANTHROPIC_API_KEY`, Codex→`OPENAI_API_KEY`, Pi→`PI_API_KEY`. `buildAgentConfigWithApiKey` keeps this mapping; `session-helpers` unchanged in shape.
+- **cwd**: user-chosen project directory (server flag / config / **runtime change-directory** / per-session override), replacing `FileSystemAdapter.getBasePath()`. cwd remains the entire filesystem contract with the agent. The default cwd (`projectDir`) can be changed at runtime without restarting the server, and each new session may be created against a chosen cwd — see §10e.
+- **shell wrapping**: login-shell (`$SHELL -l -c`), Windows `cmd.exe`, WSL `wsl.exe --exec` logic in `platform.ts` kept verbatim; `Platform` → `process.platform` shim.
+- **process teardown**: `detached` process group + `process.kill(-pid)` (Unix) / `taskkill /T /F` (Windows) kept.
+
+## 5. Configuration file (`config.json`)
+
+Single JSON file, loaded at server start, hot-reloadable via the settings API. Secrets are **env-var names**, never values.
+
+```jsonc
+{
+  "server": { "port": 4096, "projectDir": "." },       // port default 4096, overridable via --port; projectDir = default cwd
+  "defaultAgentId": "pi",                               // agent used for a new session by default
+  "nodePath": "",                                        // optional explicit node dir
+  "agents": {
+    "claude": {
+      "id": "claude", "displayName": "Claude Code",
+      "command": "npx", "args": ["-y", "@agentclientprotocol/claude-agent-acp"],
+      "env": [],
+      "apiKeyEnvVar": "ANTHROPIC_API_KEY"               // was apiKeySecretId
+    },
+    "codex":  { "id": "codex",  "displayName": "Codex",  "command": "npx", "args": ["-y", "@agentclientprotocol/codex-acp"], "env": [], "apiKeyEnvVar": "OPENAI_API_KEY" },
+    "pi":     { "id": "pi",     "displayName": "Pi",     "command": "npx", "args": ["-y", "pi-acp"], "env": [], "apiKeyEnvVar": "PI_API_KEY" }
+  },
+  "customAgents": [
+    { "id": "my-agent", "displayName": "My Agent", "command": "my-acp", "args": [], "env": [{"key":"FOO","value":"bar"}] }
+  ],
+  "permissions": { "autoAllow": false },
+  "display": {
+    "sendMessageShortcut": "enter",                     // enter | cmd-enter
+    "fontSize": 14, "showEmojis": true,
+    "autoCollapseDiffs": true, "diffCollapseThreshold": 20,
+    "maxNoteLength": 20000, "maxSelectionLength": 5000
+  },
+  "promptInjection": { "enabled": true, "latex": true, "wikiLinks": false, "tables": true },
+  "mentions": { "autoMentionActiveNote": false },       // scoped to project dir
+  "export": { "folder": "exports", "filenameTemplate": "{title}-{date}", "frontmatterTag": "chat" },
+  "windows": { "wslMode": false, "wslDistribution": "" },
+  "state": {                                            // machine-written, not hand-edited
+    "savedSessions": [], "lastUsedModels": {}, "lastUsedModes": {}, "lastUsedConfigOptions": {}
+  }
+}
+```
+
+- **`.env`** (gitignored) holds the actual keys: `ANTHROPIC_API_KEY=...`, `OPENAI_API_KEY=...`, `PI_API_KEY=...`. Server loads it (`dotenv` or manual) into `process.env`.
+- Config is authored fresh in `config.json`; there is no import path from other tools.
+- `settings-service.ts` keeps its reactive `ISettingsAccess` surface; only the backing (`config-store.ts` read/write of `config.json`) changes. `useSettings` (`useSyncExternalStore`) is unchanged.
+
+## 6. Transport contract
+
+**WebSocket (`/ws`)** — server→client stream:
+- `sessionUpdate` — the serialized `SessionUpdate` union (message/thought/user chunks, tool_call(_update), plan, available_commands, mode, usage, config_option, process_error).
+- `permissionRequest` — agent asked for permission; client replies via REST `POST /permission/:id`.
+- `terminalOutput` — for `TerminalBlock` polling (or push).
+
+**REST** (request/response), one handler per current `AcpClient` method:
+- `POST /session/initialize`, `/session/new`, `/session/load`, `/session/resume`, `/session/fork`, `/session/list` — each accepts an optional `cwd` (see §10e); `/session/new` creates the session in `cwd ?? projectDir`.
+- `POST /session/:id/prompt`, `/session/:id/cancel`, `/session/:id/config-option`, `/session/:id/mode`
+- `GET /api/directory` (current default cwd), `POST /api/directory` (change default cwd) — see §10e.
+- `POST /permission/:id` (approve/reject)
+- `GET/PUT /config`
+- `GET/DELETE /sessions/history/:id`, `POST /export`
+- `GET /mentions/search?q=`, `GET /mentions/read?path=` (project-dir-scoped)
+- `GET /update-check`
+
+**Client shim** (`web/acp-transport.ts`) exposes the same method names `hooks/*` already call, so `useAgent`, `useAgentSession`, `useAgentMessages`, `useSessionHistory` are largely untouched. The shim subscribes to the WS and re-emits through the existing `onSessionUpdate` listener set.
+
+## 7. UI
+
+- **Icons**: `lucide-react`; `IconButton.tsx`/`LucideIcon` is the single wrapper, decoupling ~10 components at once.
+- **Toasts / menus / dropdowns / modals**: React toast component; React menu/dropdown; React `Modal` subclasses (`ChangeDirectoryModal`, `EditTitleModal`, `SessionHistoryModal`). `ChangeDirectoryModal` is backed by the trustable-acp server's `POST /api/directory` and starts a new session in the chosen cwd — see §10e.
+- **Markdown** (`MarkdownRenderer.tsx`): `react-markdown` + `remark-gfm` + `remark-math`/`rehype-katex` (LaTeX) + a small remark plugin for `[[wikilinks]]` (only if `promptInjection.wikiLinks`). Internal-link clicks are an app-level "open file" action (opens in project dir / OS).
+- **Views**: `ChatView`/`FloatingChatView`/`SessionManagerView` are browser routes/panels. `FloatingChatView` renders into a plain `document.body` div with an `IChatViewHost` shim — the mount model for the web app.
+- **cwd / paths**: `ChatPanel` cwd is the project dir from config/server, changeable at runtime via the header directory control (§10e); `ToolCallBlock` base-path relative display uses the same project dir value.
+- **Hotkey event bus**: hotkeys dispatch through a browser `EventTarget`/emitter.
+
+## 8. Styling
+
+- ~30 design tokens (`--text-muted`, `--background-modifier-border`, `--text-normal`, `--background-primary/secondary`, `--interactive-accent`, `--text-accent`, `--font-monospace`, `--color-red/green/yellow/orange`, `--line-height-normal`, …) live in a `theme.css` `:root` block with a `.theme-dark` / `prefers-color-scheme: dark` variant.
+- `.markdown-rendered` content styles style the react-markdown output.
+- The runtime `--ac-chat-font-size` var is set from `config.display.fontSize`.
+
+## 9. Build & packaging
+
+- **Builds**: `web` (browser bundle + `index.html`, embedded into the server) via
+  `esbuild.web.mjs`, and `server` (single self-contained `.cjs`) via
+  `esbuild.server.mjs`. `npm run build` chains both then installs a `truacp` launcher
+  (see §10a "Single-binary build + install").
+- Deps: `react-markdown`, `remark-gfm`, `remark-math`, `rehype-katex`, `lucide-react`, a WS lib (`ws`), `dotenv`, an http framework (or Node `http`).
+- Core deps: `@agentclientprotocol/sdk`, `react`/`react-dom`, `@tanstack/react-virtual`, `diff`, `zod`, `semver`.
+- `npm run serve` runs the server directly via `tsx`; the installed `truacp` binary
+  runs the bundled build. Both serve the embedded web bundle at `localhost:<port>`
+  (default 4096).
+
+## 10. Component map
+
+1. **Server core** — `acp/*` + `platform.ts`/`paths.ts`; `server/` with an `AcpClient` per session, `config.json` load, `.env` secrets. Agent spawn is verifiable end-to-end via the `--cli` harness (§10a) with no UI.
+2. **Persistence on fs** — `session-storage.ts` and `chat-exporter.ts` on Node `fs`; `config-store.ts` is the `ISettingsAccess` backing.
+3. **Transport** — WS + REST endpoints; client-side `transport.ts` shim exposing the `AcpClient` surface the hooks expect.
+4. **UI** — `lucide` icons, React toasts/menus/modals; `ChatPanel` mounts in the browser via the floating-view pattern.
+5. **Markdown + styling** — react-markdown renderer; design-token `theme.css`.
+6. **Settings** — React form over `config.json`.
+7. **Packaging** — two build targets, `npm start`.
+
+## 10a. Server runtime (`server/index.ts`)
+
+The standalone server is run via `tsx` (`npm run serve`, or `npm run serve:trureact`
+for the trureact workbench). Behaviour beyond the transport contract:
+
+- **`--dir <path>`** — before loading `.env`/`config.json`, the server `process.chdir()`s
+  into this directory. All relative paths (including `config.json`, `.env`, and a
+  relative `server.projectDir`) then resolve against it. Absent → runs from the
+  invocation cwd.
+- **`--config <path>`** — path to `config.json` (default `config.json`).
+- **`--port <n>`** — listen port. Overrides `config.server.port`; both default to
+  **4096**. Invalid values (non-integer, <1, >65535) abort startup. `npm run
+  serve:trureact` passes `--port 4097` so it can run alongside a default instance
+  without a port clash.
+- **`--cli [...]`** — one-shot harness (`--agent`, `--cwd`) instead of the server.
+- **Network binding** — the HTTP+WS server binds `0.0.0.0` by default so it is
+  reachable from other machines (`http://<host-ip>:<port>/`), not just loopback.
+  Overridable via `config.server.host`. Startup logs the bind address, the machine
+  IP (`hostname -I`, falling back to `localhost` where unsupported, e.g. macOS),
+  the port, and the current dir.
+- **Embedded web bundle** — the built web UI is embedded into the server via a
+  generated module `server/web-bundle.generated.ts` (each `dist-web/` file inlined
+  as base64). `serveStatic` serves from this embedded map first, so the UI travels
+  with the server code and does **not** depend on `dist-web/` existing at runtime or
+  on the `--dir` working directory. It falls back to reading `dist-web/` from disk
+  only when nothing is embedded yet (dev before a build). The generated module is
+  committed (unlike `dist-web/`, which is gitignored). When no bundle is embedded
+  or on disk, `/` serves a human-readable status page.
+
+**Build the web UI + regenerate the embed module:** `npm run build:web`
+(`node esbuild.web.mjs production`). This builds `dist-web/` **and** rewrites
+`server/web-bundle.generated.ts`; `npm run dev:web` does the same on watch. Because
+esbuild's binaries are platform-specific, run it where they match (in this project's
+setup, inside the `trudev` VM).
+
+**Single-binary build + install:** `npm run build` produces one self-contained
+artifact and installs a launcher on PATH:
+
+1. `build:web` — builds the web UI and refreshes the embed module (above).
+2. `build:server` (`node esbuild.server.mjs`) — bundles `server/index.ts` into
+   `dist-bin/truacp.cjs`: everything (ws, ACP SDK, the embedded web UI) inlined,
+   only Node builtins external, minified, with a `#!/usr/bin/env node` shebang.
+3. `install-bin.sh` — copies the bundle to `~/.local/lib/truacp/truacp.cjs` and
+   writes a launcher `~/.local/bin/truacp` (`exec node <bundle> "$@"`) that forwards
+   all flags (`--port`, `--dir`, `--config`, …). It warns if `~/.local/bin` is not on
+   PATH.
+
+The result is invoked as `truacp [--port <n>] [--dir <path>] …`. Because the web UI
+is embedded, the single `.cjs` needs no `dist-web/` or `node_modules` at runtime —
+just a Node runtime. esbuild is platform-specific, so run the build in the `trudev`
+VM.
+
+## 10b. Agent installation (`setup.sh`)
+
+`./setup.sh` (or `npm run setup:agents`) installs the **CLI + ACP adapter** for
+each of the three supported agents — Claude Code, Codex, and Pi — globally via
+npm. Each adapter drives an underlying CLI that must be on PATH.
+
+### Preflight
+
+The script runs a preflight before installing anything and **aborts with a
+non-zero status** on the first failed check, so a wrong environment fails loudly
+instead of half-installing:
+
+1. **Linux only** — `uname -s` must be `Linux`. Any other platform (macOS,
+   Windows) aborts with a message pointing at the `trudev` VM, which is where
+   the supported environment lives. The script does not attempt a
+   platform-specific fallback.
+2. **Node.js already installed and on PATH** — `node` must resolve via
+   `command -v`. The script is an agent installer, **not** a Node installer: it
+   never downloads, upgrades, or version-manages a runtime. A missing `node`
+   aborts with an instruction to install it first.
+3. **npm on PATH** — `npm` must likewise resolve; it is the mechanism every
+   install below uses.
+
+On success the preflight prints the resolved `node -v` / `npm -v` so the
+versions in play are visible in the log.
+
+The agents and their adapters:
+
+| Agent | CLI package (bin) | ACP adapter (spawned by config) |
+|---|---|---|
+| Claude Code | `@anthropic-ai/claude-code` (`claude`) | `@agentclientprotocol/claude-agent-acp` |
+| Codex | `@openai/codex` (`codex`) | `@agentclientprotocol/codex-acp` |
+| Pi | `@earendil-works/pi-coding-agent` (`pi`) | `pi-acp` |
+
+- The adapters are what `config.json` spawns via `npx -y <adapter>`; a global install
+  makes launches instant/offline. The CLIs are the binaries the adapters exec.
+  `pi-acp` is **not** self-contained — it requires the `pi` binary on PATH.
+- **Pi extensions.** Two further packages are installed alongside Pi and extend the
+  `pi` CLI itself (they are not ACP adapters and are never spawned directly by
+  `config.json`):
+  - `pi-mcp-adapter` — MCP (Model Context Protocol) support for Pi, letting it
+    consume MCP servers as tool sources.
+  - `pi-web-access` — web search, URL fetching, GitHub repo cloning, and
+    PDF/YouTube/video extraction. It is backed by a third-party search provider
+    (OpenAI, Brave, Parallel, Tavily, Exa, Perplexity, or Gemini), so it needs that
+    provider's key configured in Pi before the web tools work — `setup.sh` installs
+    the package but configures no credentials (see the API-keys bullet below).
+- `@zed-industries/codex-acp` is deprecated; config and this script use the
+  maintained `@agentclientprotocol/codex-acp` (same `codex-acp` bin, drop-in).
+- The script installs into npm's global prefix when writable, else falls back to a
+  user prefix at `~/.local` (bin → `~/.local/bin`, conventionally on PATH), so no
+  sudo is needed. `--force` keeps re-runs idempotent (overwrites stale bin links).
+- API keys are not handled here — set them in `.env` (`ANTHROPIC_API_KEY`,
+  `OPENAI_API_KEY`, `PI_API_KEY`; see `.env.example`).
+- After running it, **restart the server** so the newly-installed binaries are on
+  the server process's inherited PATH.
+
+## 10c. Web UI agent selection (`web/ChatApp.tsx`)
+
+The chat UI connects to a default agent and lets the user switch:
+
+- On load, the UI reads the server's **`defaultAgentId`** (`pi` by default, from
+  `GET /api/agents`) and **auto-selects + connects** to it once — so a new session
+  starts on pi with no manual pick. The auto-select fires only if that agent id is in
+  the catalog, and only once (the user can freely switch afterward). Selecting the
+  empty `Select agent` placeholder tears the chat back down to the disabled state.
+- Until an agent is connected, the chat area is **disabled** and shows
+  **"Please Select Agent"** (both as the empty-state message and the textarea
+  placeholder).
+- Selecting an agent from the pull-down (or the auto-select) **connects immediately**
+  (`initialize` + `newSession`) — there is no separate Connect button. During the
+  attempt the header shows "Connecting…"; on success it shows "● \<agent name\>" and
+  the chat becomes writable.
+- The pull-down **stays active** (disabled only while connecting), so the agent can
+  be **switched at any time**. Switching clears the prior turns/session/permission
+  and reconnects to the new agent.
+
+## 10d. Per-agent config & auth (gear panel)
+
+Each agent is configured/authenticated through its **own native mechanism** (its
+login CLI or config file) — there is no side-store; the server just drives those.
+Configuration is surfaced **automatically on agent select** (pi probes
+with a hello and pops a form on failure; codex/claude check login and pop the auth
+flow) and can be re-triggered anytime via a **⚙️ gear** in the header: for
+pi it reopens the endpoint form (base URL + API key), for codex/claude it
+restarts the login flow (renew login). The gear reconfigures without forcing a
+reconnect; the new settings apply on the next connect.
+
+**Pi — try-then-ask, written to pi's native config.** Pi has no headless auth
+CLI, and it does *not* honor `OPENAI_BASE_URL` (verified: it always hits
+platform.openai.com). A custom OpenAI-compatible endpoint is configured through
+pi's own `~/.pi/agent/models.json` — a custom provider (`trustable`) with
+`baseUrl` + `api: "openai-completions"` + `apiKey` + a model id (per pi's
+models.md). pi-acp then discovers it via `get_available_models`.
+The UI flow is **"try, then ask"**: on selecting pi, the server probes the
+configured endpoint with `GET <baseUrl>/models` (`POST /api/pi/hello`) — a fast
+reachability + auth check that avoids the multi-second hang a real completion can
+cause on cold/large models (e.g. Ollama). If it lists models, the session starts.
+If not, a popup collects **only Base URL + API key**; `POST /api/pi/config/set`
+fetches `/models`, picks the first model, writes the provider into models.json,
+and the probe is retried before connecting. (`server/pi-config.ts`.)
+
+**Codex — ChatGPT device-code login.** Codex authenticates out-of-band via the
+`codex` CLI (not via ACP). On selecting codex, the UI calls
+`POST /api/codex/login-status` (runs `codex login status`); if not logged in it
+calls `POST /api/codex/login-device`, which runs `codex login --device-auth`,
+scrapes the verification **URL + one-time code** from stdout (ANSI-stripped), and
+returns them. The popup shows both; the user authenticates in a browser and
+clicks **"Ho completato"**, which re-checks `login status` and, on success,
+creates the session. (`server/codex-login.ts`.)
+
+**Claude — paste-code OAuth login.** On selecting claude, the UI calls
+`POST /api/claude/login-status` (runs `claude auth status --text`). If an
+`ANTHROPIC_API_KEY` is set, `loggedIn` is true (`hasApiKey`) and no login is
+needed — claude connects directly. Otherwise, if not logged in, the UI calls
+`POST /api/claude/login-start`, which runs `claude auth login`, scrapes the
+authorize **URL** from stdout, and keeps the process alive with stdin open (the
+CLI blocks on "Paste code here"). The popup shows the URL and a code input; the
+user signs in, copies the code, and submits it — `POST /api/claude/login-complete`
+writes it to the process's stdin and reports success / "Invalid code". Then the
+session is created. (`server/claude-login.ts`.) Model/mode/effort remain exposed
+via the `configOptions` API (§6) after `newSession`.
+
+Note the two login shapes differ: **codex** is device-code (show URL + code, poll
+via a "done" button), **claude** is paste-code (show URL, user pastes a code back).
+
+**Model selector.** After a session is created, the header shows a model
+dropdown next to the gear, populated from the session's `configOptions` (the
+`select` option with category/id `model`) — available immediately after connect,
+and refreshed on `config_option_update`. Changing it calls
+`setSessionConfigOption(model, value)`. This is the standard ACP channel, so it
+works for any agent that exposes model options (claude: Opus/Sonnet/Haiku; others
+after their endpoint/login is configured).
+
+New REST endpoints: `POST /api/pi/hello`, `/api/pi/config/{get,set}`,
+`/api/codex/login-status`, `/api/codex/login-device`,
+`/api/claude/login-status`, `/api/claude/login-start`, `/api/claude/login-complete`.
+
+## 10e. Change directory & new session (ACP-native)
+
+The working directory (**cwd**) is the entire filesystem contract with an agent
+(§4). Two runtime operations are exposed **by the trustable-acp server** (the local
+Node server, `server/`) — driven from the browser UI over the same REST transport as
+every other call (§6), without restarting the server: **changing the default project
+directory** and **creating a new session in a chosen directory**. Both are handled
+in the trustable-acp server's `routes.ts`/`session-host.ts` and drive the ACP core
+directly — no agent-specific code path — so they work for any ACP agent the server
+launches.
+
+The `cwd` param is already threaded end-to-end (`routes.ts` `/api/session/{new,load,
+resume,fork,list}` all read `body.cwd ?? host.projectDir()`; `transport.ts` methods
+accept an optional `cwd`; `session-host.ts` `projectDir()` is the fallback). Today
+the browser UI never sends one, so every session uses the single launch-time
+`projectDir`. This section specifies making that mutable at runtime and surfacing it
+in the UI.
+
+### Change directory — default project cwd
+
+- **`GET /api/directory`** → `{ dir: string }` — the server's current default cwd
+  (`host.projectDir()`). The existing `GET /api/agents` also returns `projectDir`;
+  this endpoint is the single-purpose read used by the picker.
+- **`POST /api/directory`** `{ dir: string }` → `{ dir: string }` — validate that
+  `dir` exists and is a directory (resolve relative paths against the server's
+  invocation cwd, as `config-store.ts` `resolveProjectDir` does; reject with 400
+  otherwise), then update the in-memory default cwd on the `SessionHost` so
+  subsequent `initialize`/`newSession` calls that omit `cwd` use it. This does **not**
+  `process.chdir()` the server process (that would move `config.json`/`.env`/
+  `.acp-data` resolution) and does **not** rewrite `config.json` unless a `persist`
+  flag is added later — it changes only the agent working directory.
+- Changing the directory does **not** retro-fit live sessions (an ACP session's cwd
+  is fixed at `session/new`). The UI should treat a directory change as a prompt to
+  start a **new session** in that directory (below).
+
+`SessionHost` gains a settable default cwd (replacing the read-only `projectDir()`
+that today only reads config): `setProjectDir(dir)` updates the field consulted by
+`initialize`/`newSession` fallbacks.
+
+### New session in a chosen directory
+
+- **`POST /api/session/new`** already accepts `{ agentId, cwd? }` and creates the
+  session in `cwd ?? projectDir`, persisting `{sessionId, agentId, cwd, …}` to
+  `.acp-data`. The change is purely to **have the UI pass `cwd`** when the user has
+  picked a directory, rather than always falling back to the default.
+- Under the hood `newSession(cwd)` issues the ACP `session/new` request with `{ cwd }`
+  (`src/acp/acp-client.ts`); the agent creates a session rooted at that worktree.
+  `session/load`/`resume`/`fork` likewise take the cwd so a
+  reopened session resolves against the same directory it was created in.
+
+### UI (§7 `ChangeDirectoryModal` + §10c connect flow)
+
+§7 already lists a `ChangeDirectoryModal` React modal with, until now, no backing
+endpoint — `POST /api/directory` is that backing endpoint. Wiring:
+
+- A **directory control in the header** (near the agent pull-down / gear, §10c/§10d)
+  shows the current cwd (today rendered read-only as the `.cwd` span in
+  `ChatApp.tsx`) and opens `ChangeDirectoryModal` on click.
+- The modal collects an absolute (or server-relative) path, `POST`s it to
+  `/api/directory`, and on success updates the displayed cwd.
+- Because a directory change implies a fresh session, confirming the modal **starts a
+  new session** in the new directory: it calls `newSession` with the chosen `cwd`
+  (and re-runs `initialize` with that cwd if the agent isn't connected yet), clearing
+  the prior turns/session/permission exactly like the agent-switch teardown in §10c.
+- A **"New chat"** action in the header creates a new session in the *current* cwd
+  (calls `newSession(cwd)` with the header's directory), so directory selection and
+  new-session creation compose: pick a directory → new session there.
+
+### Verification
+
+- `POST /api/directory {dir: "<path-A>"}` then `POST /api/session/new {agentId:
+  "pi"}` → the session is created with cwd `<path-A>` and `.acp-data` records
+  `cwd: "<path-A>"`.
+- `POST /api/session/new {agentId: "pi", cwd: "<path-B>"}` → session created in
+  `<path-B>` regardless of the default; a prompt that lists files reflects `<path-B>`.
+- `POST /api/directory {dir: "/does/not/exist"}` → 400, default cwd unchanged.
+- In the browser: change the directory via the header modal, send a prompt, confirm
+  the agent operates in the new directory; start a "New chat" and confirm a fresh
+  session in the same directory.
+
+New REST endpoints: `GET /api/directory`, `POST /api/directory`.
+
+## 11. Verification
+
+- **Phase 1**: from a terminal, server spawns `claude` in a chosen cwd, completes `initialize`→`newSession`→`sendPrompt`, and streams `agent_message_chunk`s to stdout. Repeat for `codex` and `pi`.
+- **End-to-end**: open `localhost:PORT`, start a chat, send a prompt, see streamed response + a tool call with diff, approve a permission, fork/resume a session, export to markdown. `config.json` alone (plus `.env`) fully configures agents, cwd, and display.
+
+

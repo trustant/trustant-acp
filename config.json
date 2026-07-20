@@ -1,0 +1,34 @@
+{
+  "server": { "port": 4096, "projectDir": "." },
+  "defaultAgentId": "pi",
+  "nodePath": "",
+  "agents": {
+    "claude": {
+      "id": "claude",
+      "displayName": "Claude Code",
+      "command": "npx",
+      "args": ["-y", "@agentclientprotocol/claude-agent-acp"],
+      "env": [],
+      "apiKeyEnvVar": "ANTHROPIC_API_KEY"
+    },
+    "codex": {
+      "id": "codex",
+      "displayName": "Codex",
+      "command": "npx",
+      "args": ["-y", "@agentclientprotocol/codex-acp"],
+      "env": [],
+      "apiKeyEnvVar": "OPENAI_API_KEY"
+    },
+    "pi": {
+      "id": "pi",
+      "displayName": "Pi",
+      "command": "npx",
+      "args": ["-y", "pi-acp"],
+      "env": [],
+      "apiKeyEnvVar": "PI_API_KEY"
+    }
+  },
+  "customAgents": [],
+  "permissions": { "autoAllow": false },
+  "windows": { "wslMode": false, "wslDistribution": "" }
+}

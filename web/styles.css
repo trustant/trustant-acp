@@ -1,0 +1,379 @@
+/* Standalone ACP client — browser chat styles.
+   Self-contained (no Obsidian theme variables); light + dark via prefers-color-scheme. */
+
+:root {
+	--bg: #ffffff;
+	--bg-alt: #f4f4f5;
+	--bg-user: #e8f0fe;
+	--text: #1f2328;
+	--muted: #6b7280;
+	--border: #e4e4e7;
+	--accent: #2563eb;
+	--accent-text: #ffffff;
+	--error-bg: #fee2e2;
+	--error-text: #991b1b;
+	--mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #1a1b1e;
+		--bg-alt: #26272b;
+		--bg-user: #1e3a5f;
+		--text: #e4e4e7;
+		--muted: #9ca3af;
+		--border: #3f3f46;
+		--accent: #3b82f6;
+		--error-bg: #451a1a;
+		--error-text: #fca5a5;
+	}
+}
+
+* {
+	box-sizing: border-box;
+}
+body {
+	margin: 0;
+	font: 14px/1.55 system-ui, -apple-system, sans-serif;
+	color: var(--text);
+	background: var(--bg);
+}
+
+.app {
+	display: flex;
+	flex-direction: column;
+	height: 100vh;
+}
+
+/* top bar */
+.topbar {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	padding: 0.6rem 0.9rem;
+	border-bottom: 1px solid var(--border);
+	background: var(--bg-alt);
+}
+.topbar .brand {
+	font-weight: 600;
+}
+.topbar select,
+.topbar button {
+	font: inherit;
+	padding: 0.3rem 0.6rem;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--bg);
+	color: var(--text);
+	cursor: pointer;
+}
+.topbar button {
+	background: var(--accent);
+	color: var(--accent-text);
+	border-color: transparent;
+}
+.topbar button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+.topbar .status {
+	color: var(--accent);
+	font-weight: 500;
+}
+.topbar .cwd {
+	margin-left: auto;
+	font-family: var(--mono);
+	font-size: 0.75rem;
+	color: var(--muted);
+	max-width: 40%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* error banner */
+.error {
+	padding: 0.5rem 0.9rem;
+	background: var(--error-bg);
+	color: var(--error-text);
+	font-size: 0.85rem;
+	cursor: pointer;
+}
+
+/* message list */
+.messages {
+	flex: 1;
+	overflow-y: auto;
+	padding: 1rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+}
+.empty {
+	color: var(--muted);
+	text-align: center;
+	margin-top: 2rem;
+}
+
+.turn {
+	display: flex;
+	flex-direction: column;
+}
+.turn.user {
+	align-items: flex-end;
+}
+.turn .bubble {
+	max-width: 80%;
+	padding: 0.5rem 0.8rem;
+	border-radius: 10px;
+	background: var(--bg-alt);
+	white-space: pre-wrap;
+	word-wrap: break-word;
+}
+.turn.user .bubble {
+	background: var(--bg-user);
+}
+.turn.assistant .bubble.markdown {
+	max-width: 100%;
+	white-space: normal;
+}
+.markdown pre {
+	background: var(--bg-alt);
+	padding: 0.7rem;
+	border-radius: 8px;
+	overflow-x: auto;
+	font-family: var(--mono);
+	font-size: 0.85rem;
+}
+.markdown code {
+	font-family: var(--mono);
+	font-size: 0.85em;
+}
+.markdown :not(pre) > code {
+	background: var(--bg-alt);
+	padding: 0.1em 0.35em;
+	border-radius: 4px;
+}
+.markdown table {
+	border-collapse: collapse;
+}
+.markdown th,
+.markdown td {
+	border: 1px solid var(--border);
+	padding: 0.3rem 0.6rem;
+}
+
+.thoughts {
+	color: var(--muted);
+	font-size: 0.85rem;
+	margin-bottom: 0.3rem;
+}
+.thoughts summary {
+	cursor: pointer;
+}
+.thought-body {
+	white-space: pre-wrap;
+	padding: 0.3rem 0 0.3rem 0.8rem;
+	border-left: 2px solid var(--border);
+}
+
+/* tool call rows */
+.turn.tool {
+	flex-direction: row;
+	align-items: center;
+	gap: 0.5rem;
+	font-size: 0.85rem;
+	color: var(--muted);
+	font-family: var(--mono);
+}
+.turn.tool .tool-title {
+	color: var(--text);
+}
+.turn.tool.status-completed .tool-status {
+	color: #16a34a;
+}
+.turn.tool.status-failed .tool-status {
+	color: var(--error-text);
+}
+
+/* permission prompt */
+.permission {
+	border: 1px solid var(--accent);
+	border-radius: 10px;
+	padding: 0.7rem 0.9rem;
+	background: var(--bg-alt);
+}
+.perm-title {
+	font-weight: 500;
+	margin-bottom: 0.5rem;
+}
+.perm-options {
+	display: flex;
+	gap: 0.5rem;
+	flex-wrap: wrap;
+}
+.perm-options button {
+	font: inherit;
+	padding: 0.3rem 0.7rem;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--bg);
+	color: var(--text);
+	cursor: pointer;
+}
+.perm-options button:first-child {
+	background: var(--accent);
+	color: var(--accent-text);
+	border-color: transparent;
+}
+
+/* composer */
+.composer {
+	display: flex;
+	gap: 0.6rem;
+	padding: 0.7rem 0.9rem;
+	border-top: 1px solid var(--border);
+	background: var(--bg-alt);
+}
+.composer textarea {
+	flex: 1;
+	resize: none;
+	min-height: 2.6rem;
+	max-height: 8rem;
+	font: inherit;
+	padding: 0.5rem 0.7rem;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--bg);
+	color: var(--text);
+}
+.composer button {
+	font: inherit;
+	padding: 0 1.1rem;
+	border: none;
+	border-radius: 8px;
+	background: var(--accent);
+	color: var(--accent-text);
+	cursor: pointer;
+}
+.composer button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+/* Gear config button in the topbar */
+.topbar .gear {
+	font-size: 1rem;
+	line-height: 1;
+	padding: 0.3rem 0.5rem;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--bg);
+	color: var(--text);
+	cursor: pointer;
+}
+.topbar .gear:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+/* Config / auth modals (pi endpoint, codex device-auth) */
+.modal-backdrop {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.45);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 50;
+}
+.modal {
+	background: var(--bg);
+	color: var(--text);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	padding: 1.2rem;
+	width: min(90%, 30rem);
+	box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+.modal-title {
+	font-weight: 600;
+	font-size: 1.05rem;
+	margin-bottom: 0.4rem;
+}
+.modal-desc {
+	color: var(--muted);
+	font-size: 0.85rem;
+	margin: 0 0 0.9rem;
+}
+.modal-field {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+	margin-bottom: 0.8rem;
+	font-size: 0.85rem;
+}
+.modal-field > span {
+	color: var(--muted);
+}
+.modal-field input {
+	font: inherit;
+	padding: 0.45rem 0.6rem;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--bg-alt);
+	color: var(--text);
+}
+.modal-field a {
+	color: var(--accent);
+	word-break: break-all;
+}
+.auth-code {
+	font-family: var(--mono);
+	font-size: 1.3rem;
+	letter-spacing: 0.15em;
+	padding: 0.4rem 0.6rem;
+	background: var(--bg-alt);
+	border-radius: 8px;
+	display: inline-block;
+	user-select: all;
+}
+.modal-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 0.5rem;
+	margin-top: 0.4rem;
+}
+.modal-actions button {
+	font: inherit;
+	padding: 0.4rem 0.9rem;
+	border: none;
+	border-radius: 8px;
+	background: var(--accent);
+	color: var(--accent-text);
+	cursor: pointer;
+}
+.modal-actions button.secondary {
+	background: var(--bg-alt);
+	color: var(--text);
+	border: 1px solid var(--border);
+}
+.modal-actions button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+/* Model selector in the topbar */
+.topbar .model-select {
+	font: inherit;
+	padding: 0.3rem 0.5rem;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--bg);
+	color: var(--text);
+	cursor: pointer;
+	max-width: 12rem;
+}
+.topbar .model-select:disabled {
+	opacity: 0.5;
+	cursor: default;
+}

@@ -1,0 +1,554 @@
+/**
+ * Sub-hook for managing agent session lifecycle and configuration.
+ *
+ * Handles session creation, restart, close, config/mode/model management,
+ * and session-level update processing.
+ */
+
+import * as React from "react";
+const { useState, useCallback, useRef } = React;
+
+import type {
+	ChatSession,
+	SessionModeState,
+	SessionUpdate,
+	SessionConfigOption,
+} from "../types/session";
+import type { AcpClient } from "../acp/acp-client";
+import type { ISettingsAccess } from "../services/settings-service";
+import type { ErrorInfo } from "../types/errors";
+import { extractErrorMessage } from "../utils/error-utils";
+import { getLogger } from "../utils/logger";
+import {
+	type AgentDisplayInfo,
+	getDefaultAgentId,
+	getAvailableAgentsFromSettings,
+	getCurrentAgent,
+	findAgentSettings,
+	buildAgentConfigWithApiKey,
+	createInitialSession,
+} from "../services/session-helpers";
+import {
+	applyLegacyValue,
+	tryRestoreConfigOption,
+	restoreSavedConfigOptions,
+	restoreLegacyConfig,
+} from "../services/session-state";
+
+// ============================================================================
+// Types
+// ============================================================================
+
+export interface UseAgentSessionReturn {
+	session: ChatSession;
+	isReady: boolean;
+
+	// Session lifecycle
+	createSession: (
+		overrideAgentId?: string,
+		overrideCwd?: string,
+	) => Promise<void>;
+	restartSession: (
+		newAgentId?: string,
+		overrideCwd?: string,
+	) => Promise<void>;
+	closeSession: () => Promise<void>;
+	forceRestartAgent: () => Promise<void>;
+	cancelOperation: () => Promise<void>;
+	getAvailableAgents: () => AgentDisplayInfo[];
+	updateSessionFromLoad: (
+		sessionId: string,
+		modes?: SessionModeState,
+		configOptions?: SessionConfigOption[],
+	) => Promise<void>;
+
+	// Config
+	setMode: (modeId: string) => Promise<void>;
+	setConfigOption: (configId: string, value: string) => Promise<void>;
+
+	/** Handle session-level updates (commands, mode, config, usage, error) */
+	handleSessionUpdate: (update: SessionUpdate) => void;
+}
+
+// ============================================================================
+// Hook Implementation
+// ============================================================================
+
+export function useAgentSession(
+	agentClient: AcpClient,
+	settingsAccess: ISettingsAccess,
+	workingDirectory: string,
+	setErrorInfo: (error: ErrorInfo | null) => void,
+	initialAgentId?: string,
+): UseAgentSessionReturn {
+	// ============================================================
+	// Session State
+	// ============================================================
+
+	const initialSettings = settingsAccess.getSnapshot();
+	const effectiveInitialAgentId =
+		initialAgentId || getDefaultAgentId(initialSettings);
+	const initialAgent = getCurrentAgent(
+		initialSettings,
+		effectiveInitialAgentId,
+	);
+
+	const [session, setSession] = useState<ChatSession>(() =>
+		createInitialSession(
+			effectiveInitialAgentId,
+			initialAgent.displayName,
+			workingDirectory,
+		),
+	);
+
+	const isReady = session.state === "ready";
+
+	// Ref for accessing latest session in callbacks without deps
+	const sessionRef = useRef(session);
+	sessionRef.current = session;
+
+	// ============================================================
+	// Session Update Handler (session-level only)
+	// ============================================================
+
+	const handleSessionUpdate = useCallback(
+		(update: SessionUpdate) => {
+			switch (update.type) {
+				case "available_commands_update":
+					setSession((prev) => ({
+						...prev,
+						availableCommands: update.commands,
+					}));
+					break;
+				case "current_mode_update":
+					setSession((prev) => {
+						if (!prev.modes) return prev;
+						return {
+							...prev,
+							modes: {
+								...prev.modes,
+								currentModeId: update.currentModeId,
+							},
+						};
+					});
+					break;
+				case "config_option_update":
+					setSession((prev) => ({
+						...prev,
+						configOptions: update.configOptions,
+					}));
+					break;
+				case "usage_update":
+					setSession((prev) => ({
+						...prev,
+						usage: {
+							used: update.used,
+							size: update.size,
+							cost: update.cost ?? undefined,
+						},
+					}));
+					break;
+				case "process_error":
+					setSession((prev) => ({ ...prev, state: "error" }));
+					setErrorInfo({
+						title: update.error.title || "Agent Error",
+						message: update.error.message || "An error occurred",
+						suggestion: update.error.suggestion,
+					});
+					break;
+			}
+		},
+		[setErrorInfo],
+	);
+
+	// ============================================================
+	// Session Lifecycle
+	// ============================================================
+
+	const createSession = useCallback(
+		async (overrideAgentId?: string, overrideCwd?: string) => {
+			const effectiveCwd = overrideCwd || workingDirectory;
+			const settings = settingsAccess.getSnapshot();
+			const agentId = overrideAgentId || getDefaultAgentId(settings);
+			const currentAgent = getCurrentAgent(settings, agentId);
+
+			setSession((prev) => ({
+				...prev,
+				sessionId: null,
+				state: "initializing",
+				agentId: agentId,
+				agentDisplayName: currentAgent.displayName,
+				authMethods: [],
+				availableCommands: undefined,
+				modes: undefined,
+				configOptions: undefined,
+				usage: undefined,
+				promptCapabilities: prev.promptCapabilities,
+				agentCapabilities: prev.agentCapabilities,
+				agentInfo: prev.agentInfo,
+				createdAt: new Date(),
+				lastActivityAt: new Date(),
+			}));
+			setErrorInfo(null);
+
+			try {
+				const agentSettings = findAgentSettings(settings, agentId);
+
+				if (!agentSettings) {
+					setSession((prev) => ({ ...prev, state: "error" }));
+					setErrorInfo({
+						title: "Agent Not Found",
+						message: `Agent with ID "${agentId}" not found in settings`,
+						suggestion:
+							"Please check your agent configuration in settings.",
+					});
+					return;
+				}
+
+				const agentConfig = buildAgentConfigWithApiKey(
+					settings,
+					agentSettings,
+					agentId,
+					effectiveCwd,
+				);
+
+				const initResult =
+					!agentClient.isInitialized() ||
+					agentClient.getCurrentAgentId() !== agentId
+						? await agentClient.initialize(agentConfig)
+						: null;
+
+				const sessionResult =
+					await agentClient.newSession(effectiveCwd);
+
+				// Pre-compute restored modes/configOptions BEFORE
+				// marking state as "ready" to avoid a UI race: without this,
+				// the dropdowns briefly show the agent's default values and
+				// a message sent during the window hits the agent in the
+				// wrong mode. With this, the first render after session
+				// creation already shows the user's saved selection.
+				let finalModes = sessionResult.modes;
+				let finalConfigOptions = sessionResult.configOptions;
+
+				if (sessionResult.configOptions && sessionResult.sessionId) {
+					let configOptions = sessionResult.configOptions;
+					configOptions = await restoreSavedConfigOptions(
+						agentClient,
+						sessionResult.sessionId,
+						configOptions,
+						settings.lastUsedConfigOptions[agentId],
+					);
+					configOptions = await tryRestoreConfigOption(
+						agentClient,
+						sessionResult.sessionId,
+						configOptions,
+						"model",
+						settings.lastUsedModels[agentId],
+					);
+					configOptions = await tryRestoreConfigOption(
+						agentClient,
+						sessionResult.sessionId,
+						configOptions,
+						"mode",
+						settings.lastUsedModes[agentId],
+					);
+					finalConfigOptions = configOptions;
+				} else if (sessionResult.sessionId) {
+					const restored = await restoreLegacyConfig(
+						agentClient,
+						sessionResult,
+						settings.lastUsedModes[agentId],
+					);
+					finalModes = restored.modes;
+				}
+
+				setSession((prev) => ({
+					...prev,
+					sessionId: sessionResult.sessionId,
+					state: "ready",
+					authMethods: initResult?.authMethods ?? [],
+					modes: finalModes,
+					configOptions: finalConfigOptions,
+					promptCapabilities: initResult
+						? initResult.promptCapabilities
+						: prev.promptCapabilities,
+					agentCapabilities: initResult
+						? initResult.agentCapabilities
+						: prev.agentCapabilities,
+					agentInfo: initResult
+						? initResult.agentInfo
+						: prev.agentInfo,
+					lastActivityAt: new Date(),
+				}));
+			} catch (error) {
+				setSession((prev) => ({ ...prev, state: "error" }));
+				setErrorInfo({
+					title: "Session Creation Failed",
+					message: `Failed to create new session: ${extractErrorMessage(error)}`,
+					suggestion:
+						"Please check the agent configuration and try again.",
+				});
+			}
+		},
+		[agentClient, settingsAccess, workingDirectory, setErrorInfo],
+	);
+
+	const restartSession = useCallback(
+		async (newAgentId?: string, overrideCwd?: string) => {
+			await createSession(newAgentId, overrideCwd);
+		},
+		[createSession],
+	);
+
+	const closeSession = useCallback(async () => {
+		const s = sessionRef.current;
+		if (s.sessionId) {
+			try {
+				await agentClient.cancel(s.sessionId);
+			} catch (error) {
+				getLogger().warn("Failed to cancel session:", error);
+			}
+		}
+		try {
+			await agentClient.disconnect();
+		} catch (error) {
+			getLogger().warn("Failed to disconnect:", error);
+		}
+		setSession((prev) => ({
+			...prev,
+			sessionId: null,
+			state: "disconnected",
+		}));
+	}, [agentClient]);
+
+	const forceRestartAgent = useCallback(async () => {
+		const currentAgentId = sessionRef.current.agentId;
+		await agentClient.disconnect();
+		await createSession(currentAgentId);
+	}, [agentClient, createSession]);
+
+	const cancelOperation = useCallback(async () => {
+		const s = sessionRef.current;
+		if (!s.sessionId) return;
+		try {
+			await agentClient.cancel(s.sessionId);
+			setSession((prev) => ({ ...prev, state: "ready" }));
+		} catch (error) {
+			getLogger().warn("Failed to cancel operation:", error);
+			setSession((prev) => ({ ...prev, state: "ready" }));
+		}
+	}, [agentClient]);
+
+	const getAvailableAgents = useCallback(() => {
+		const settings = settingsAccess.getSnapshot();
+		return getAvailableAgentsFromSettings(settings);
+	}, [settingsAccess]);
+
+	const updateSessionFromLoad = useCallback(
+		async (
+			sessionId: string,
+			modes?: SessionModeState,
+			configOptions?: SessionConfigOption[],
+		) => {
+			// Pre-compute restored config BEFORE marking ready to avoid a UI
+			// race where the dropdowns briefly show the agent's current values
+			// before the user's saved selection is re-applied. See the matching
+			// refactor in createSession for the rationale.
+			const s = sessionRef.current;
+			const settings = settingsAccess.getSnapshot();
+			const agentId = s.agentId;
+
+			let finalModes = modes;
+			let finalConfigOptions = configOptions;
+
+			if (configOptions && sessionId) {
+				let restored = configOptions;
+				restored = await restoreSavedConfigOptions(
+					agentClient,
+					sessionId,
+					restored,
+					settings.lastUsedConfigOptions[agentId],
+				);
+				restored = await tryRestoreConfigOption(
+					agentClient,
+					sessionId,
+					restored,
+					"model",
+					settings.lastUsedModels[agentId],
+				);
+				restored = await tryRestoreConfigOption(
+					agentClient,
+					sessionId,
+					restored,
+					"mode",
+					settings.lastUsedModes[agentId],
+				);
+				finalConfigOptions = restored;
+			} else if (sessionId && modes) {
+				const restored = await restoreLegacyConfig(
+					agentClient,
+					{ sessionId, modes, configOptions: undefined },
+					settings.lastUsedModes[agentId],
+				);
+				finalModes = restored.modes;
+			}
+
+			setSession((prev) => ({
+				...prev,
+				sessionId,
+				state: "ready",
+				modes: finalModes ?? prev.modes,
+				configOptions: finalConfigOptions ?? prev.configOptions,
+				lastActivityAt: new Date(),
+			}));
+		},
+		[agentClient, settingsAccess],
+	);
+
+	// ============================================================
+	// Config (including legacy)
+	// ============================================================
+
+	const setLegacyConfigValue = useCallback(
+		async (value: string) => {
+			const s = sessionRef.current;
+			if (!s.sessionId) {
+				getLogger().debug("Cannot set mode: no active session");
+				return;
+			}
+
+			const previousValue = s.modes?.currentModeId;
+
+			setSession((prev) => applyLegacyValue(prev, value));
+
+			try {
+				await agentClient.setSessionMode(s.sessionId, value);
+
+				if (s.agentId) {
+					const currentSettings = settingsAccess.getSnapshot();
+					void settingsAccess.updateSettings({
+						lastUsedModes: {
+							...currentSettings.lastUsedModes,
+							[s.agentId]: value,
+						},
+					});
+				}
+			} catch (error) {
+				getLogger().error("Failed to set mode:", error);
+				if (previousValue) {
+					setSession((prev) => applyLegacyValue(prev, previousValue));
+				}
+			}
+		},
+		[agentClient, settingsAccess],
+	);
+
+	const setMode = useCallback(
+		(modeId: string) => setLegacyConfigValue(modeId),
+		[setLegacyConfigValue],
+	);
+
+	const setConfigOption = useCallback(
+		async (configId: string, value: string) => {
+			const s = sessionRef.current;
+			if (!s.sessionId) {
+				getLogger().debug(
+					"Cannot set config option: no active session",
+				);
+				return;
+			}
+
+			const previousConfigOptions = s.configOptions;
+
+			setSession((prev) => {
+				if (!prev.configOptions) return prev;
+				return {
+					...prev,
+					configOptions: prev.configOptions.map((opt) =>
+						opt.id === configId && opt.type === "select"
+							? { ...opt, currentValue: value }
+							: opt,
+					),
+				};
+			});
+
+			try {
+				const updatedOptions = await agentClient.setSessionConfigOption(
+					s.sessionId,
+					configId,
+					value,
+				);
+				setSession((prev) => ({
+					...prev,
+					configOptions: updatedOptions,
+				}));
+
+				const changedOption = updatedOptions.find(
+					(o) => o.id === configId,
+				);
+				if (changedOption && s.agentId) {
+					const currentSettings = settingsAccess.getSnapshot();
+					if (changedOption.category === "model") {
+						void settingsAccess.updateSettings({
+							lastUsedModels: {
+								...currentSettings.lastUsedModels,
+								[s.agentId]: value,
+							},
+						});
+					} else if (changedOption.category === "mode") {
+						void settingsAccess.updateSettings({
+							lastUsedModes: {
+								...currentSettings.lastUsedModes,
+								[s.agentId]: value,
+							},
+						});
+					} else if (
+						configId !== "__proto__" &&
+						configId !== "constructor"
+					) {
+						const allOptions =
+							currentSettings.lastUsedConfigOptions;
+						const agentOptions = allOptions[s.agentId] ?? {};
+						void settingsAccess.updateSettings({
+							lastUsedConfigOptions: {
+								...allOptions,
+								[s.agentId]: {
+									...agentOptions,
+									[configId]: value,
+								},
+							},
+						});
+					}
+				}
+			} catch (error) {
+				getLogger().error("Failed to set config option:", error);
+				if (previousConfigOptions) {
+					setSession((prev) => ({
+						...prev,
+						configOptions: previousConfigOptions,
+					}));
+				}
+			}
+		},
+		[agentClient, settingsAccess],
+	);
+
+	// ============================================================
+	// Return
+	// ============================================================
+
+	return {
+		session,
+		isReady,
+		createSession,
+		restartSession,
+		closeSession,
+		forceRestartAgent,
+		cancelOperation,
+		getAvailableAgents,
+		updateSessionFromLoad,
+		setMode,
+		setConfigOption,
+		handleSessionUpdate,
+	};
+}
