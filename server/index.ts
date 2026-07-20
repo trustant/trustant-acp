@@ -38,18 +38,21 @@ async function runCli(argv: string[]): Promise<void> {
 	let agentId: string | undefined;
 	let cwd: string | undefined;
 	let configPath = "config.json";
+	let envPath: string | undefined;
 	const rest: string[] = [];
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === "--agent") agentId = argv[++i];
 		else if (a === "--cwd") cwd = argv[++i];
 		else if (a === "--config") configPath = argv[++i];
+		else if (a === "--env") envPath = argv[++i];
 		else if (a === "--port") i++; // not meaningful for the one-shot harness
 		else if (a === "--cli") continue;
 		else rest.push(a);
 	}
 
-	await loadDotEnv(".env");
+	// Only the explicitly-given secrets file; never the target directory's .env.
+	if (envPath) await loadDotEnv(envPath);
 	const config = await loadConfig(configPath);
 	const id = agentId ?? config.defaultAgentId;
 	const agent = findConfigAgent(config, id);
@@ -241,16 +244,54 @@ function machineIp(): string {
 	}
 }
 
+/**
+ * The address to advertise in the startup banner — the one a user can actually
+ * open in a browser.
+ *
+ * This server normally runs inside the `trudev` Lima VM while the browser is on
+ * the macOS host, so the reachable address is the host↔VM interface (`lima0`),
+ * NOT the VM's own default route (`eth0`, first in `hostname -I`) and not the
+ * k3s/CNI addresses. We resolve it by interface name rather than by position:
+ * `hostname -I` ordering shifts as interfaces come and go, so any fixed index is
+ * only accidentally correct.
+ *
+ * Falls back to the first `hostname -I` address when `lima0` is absent (bare
+ * Linux server, no VM), and finally to "localhost".
+ */
+function advertisedIp(): string {
+	// Preferred: the Lima host↔VM interface, addressed by name.
+	for (const iface of ["lima0"]) {
+		try {
+			const out = execSync(
+				`ip -o -4 addr show dev ${iface} scope global 2>/dev/null`,
+				{ encoding: "utf8" },
+			).trim();
+			const addr = out.split(/\s+/)[3]?.split("/")[0];
+			if (addr) return addr;
+		} catch {
+			// Interface absent (not running under Lima) — fall through.
+		}
+	}
+	return machineIp().split(/\s+/)[0] || "localhost";
+}
+
 async function runServer(
 	configPath: string,
 	dir?: string,
 	portOverride?: number,
+	envPath?: string,
 ): Promise<void> {
-	// Change into the requested directory before doing anything else so that
-	// relative paths (.env, config.json, projectDir) resolve against it.
+	// Secrets are loaded BEFORE the chdir, from a path that does not depend on
+	// the working directory. The target app checkout is user content — its own
+	// .env is deliberately NOT read, so an app cannot inject or shadow provider
+	// credentials. Real environment variables still win (loadDotEnv never
+	// overwrites), which is how externally-supplied keys are passed in.
+	if (envPath) await loadDotEnv(envPath);
+
+	// Change into the requested directory so that relative paths (config.json,
+	// projectDir) resolve against it.
 	if (dir) process.chdir(dir);
 
-	await loadDotEnv(".env");
 	const config = await loadConfig(configPath);
 	// --port wins over config.server.port; both default to 4096.
 	if (portOverride !== undefined) config.server.port = portOverride;
@@ -287,7 +328,7 @@ async function runServer(
 	await new Promise<void>((resolve) =>
 		httpServer.listen(port, host_addr, resolve),
 	);
-	const ip = machineIp().split(/\s+/)[0] || "localhost";
+	const ip = advertisedIp();
 	console.error(
 		`Standalone ACP client listening\n` +
 			`  Bind: ${host_addr}\n` +
@@ -389,6 +430,8 @@ const configFlag = argv.indexOf("--config");
 const configPath = configFlag >= 0 ? argv[configFlag + 1] : "config.json";
 const dirFlag = argv.indexOf("--dir");
 const startDir = dirFlag >= 0 ? argv[dirFlag + 1] : undefined;
+const envFlag = argv.indexOf("--env");
+const envPath = envFlag >= 0 ? argv[envFlag + 1] : undefined;
 const portFlag = argv.indexOf("--port");
 let portOverride: number | undefined;
 if (portFlag >= 0) {
@@ -406,7 +449,7 @@ if (argv.includes("--cli")) {
 		process.exit(1);
 	});
 } else {
-	runServer(configPath, startDir, portOverride).catch((err) => {
+	runServer(configPath, startDir, portOverride, envPath).catch((err) => {
 		console.error("✗ server failed:", err);
 		process.exit(1);
 	});

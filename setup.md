@@ -1,8 +1,9 @@
 # setup.sh — agent installation
 
 `setup.sh` installs the coding agents used by the standalone ACP client, plus
-their ACP adapters, globally via npm. It is a one-shot bootstrap script: run it
-once on a new machine (or inside the `trudev` VM) before starting the server.
+their ACP adapters, globally via npm, then installs this project's own
+dependencies and builds it. It is a one-shot bootstrap script: run it once on a
+new machine (or inside the `trudev` VM) before starting the server.
 
 ```bash
 ./setup.sh
@@ -43,6 +44,9 @@ For Codex, `@zed-industries/codex-acp` is deprecated in favour of the
    by allowing bin links from a previously-installed adapter (e.g. the
    deprecated `@zed-industries/codex-acp`) to be overwritten.
 4. **Report** — prints each package with its version from `npm view`.
+5. **Project build** — `cd`s to the repo root (the script's own directory), then
+   runs `npm install` for this project's dependencies followed by
+   `npm run build`, so the server is ready to serve immediately afterwards.
 
 `set -euo pipefail` is in effect, so any failing step aborts the script.
 

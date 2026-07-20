@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # setup.sh — install the coding agents used by the standalone ACP client
-# and their ACP adapters, globally via npm.
+# and their ACP adapters, globally via npm, then install this project's own
+# dependencies and build it.
 #
 # Installs, for each agent referenced in config.json:
 #   - Claude Code : @anthropic-ai/claude-code  + @agentclientprotocol/claude-agent-acp
@@ -97,6 +98,15 @@ for pkg in "${PACKAGES[@]}"; do
 	ver="$(npm view "$pkg" version 2>/dev/null || echo '?')"
 	printf '  %-45s %s\n' "$pkg" "$ver"
 done
+
+echo
+echo "Installing project dependencies…"
+cd "$(dirname "$0")"
+npm install
+
+echo
+echo "Building…"
+npm run build
 
 echo
 echo "Next steps:"

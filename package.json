@@ -4,7 +4,8 @@
 	"description": "Standalone ACP client — use AI coding agents via the Agent Client Protocol",
 	"main": "main.js",
 	"scripts": {
-		"dev": "node esbuild.config.mjs",
+		"dev": "bash run.sh",
+		"dev:plugin": "node esbuild.config.mjs",
 		"setup:agents": "bash setup.sh",
 		"serve": "tsx server/index.ts",
 		"serve:trureact": "tsx server/index.ts --dir /home/msciab.guest/workbench/trureact/ --port 4097",

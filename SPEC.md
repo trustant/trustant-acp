@@ -133,6 +133,7 @@ Single JSON file, loaded at server start, hot-reloadable via the settings API. S
 ```
 
 - **`.env`** (gitignored) holds the actual keys: `ANTHROPIC_API_KEY=...`, `OPENAI_API_KEY=...`, `PI_API_KEY=...`. Server loads it (`dotenv` or manual) into `process.env`.
+- **Secrets location** — the server reads exactly one secrets file, given by `--env <path>` and loaded **before** the `--dir` chdir (§10a), so the path never depends on the working directory. The target directory's own `.env` is deliberately **not** read: that checkout is user content, and reading it would let an app inject or shadow provider credentials. `loadDotEnv` never overwrites an already-set variable, so externally-supplied keys (exported in the environment) win over the file. Omitting `--env` loads no file at all — keys then come purely from the environment.
 - Config is authored fresh in `config.json`; there is no import path from other tools.
 - `settings-service.ts` keeps its reactive `ISettingsAccess` surface; only the backing (`config-store.ts` read/write of `config.json`) changes. `useSettings` (`useSyncExternalStore`) is unchanged.
 
@@ -195,12 +196,16 @@ Single JSON file, loaded at server start, hot-reloadable via the settings API. S
 ## 10a. Server runtime (`server/index.ts`)
 
 The standalone server is run via `tsx` (`npm run serve`, or `npm run serve:trureact`
-for the trureact workbench). Behaviour beyond the transport contract:
+for the trureact workbench). For development use `npm run dev` (§10a-dev), which adds
+hot reload. Behaviour beyond the transport contract:
 
-- **`--dir <path>`** — before loading `.env`/`config.json`, the server `process.chdir()`s
-  into this directory. All relative paths (including `config.json`, `.env`, and a
-  relative `server.projectDir`) then resolve against it. Absent → runs from the
-  invocation cwd.
+- **`--dir <path>`** — the server `process.chdir()`s into this directory. Relative
+  paths (`config.json`, a relative `server.projectDir`) then resolve against it.
+  Absent → runs from the invocation cwd. Note the chdir happens **after** `--env` is
+  loaded, so secrets never resolve against the target directory.
+- **`--env <path>`** — secrets file, loaded before the `--dir` chdir; give it an
+  absolute path. The target directory's own `.env` is never read (see §5). Omitted →
+  no file is loaded and keys come from the environment. A missing file is a no-op.
 - **`--config <path>`** — path to `config.json` (default `config.json`).
 - **`--port <n>`** — listen port. Overrides `config.server.port`; both default to
   **4096**. Invalid values (non-integer, <1, >65535) abort startup. `npm run
@@ -209,9 +214,18 @@ for the trureact workbench). Behaviour beyond the transport contract:
 - **`--cli [...]`** — one-shot harness (`--agent`, `--cwd`) instead of the server.
 - **Network binding** — the HTTP+WS server binds `0.0.0.0` by default so it is
   reachable from other machines (`http://<host-ip>:<port>/`), not just loopback.
-  Overridable via `config.server.host`. Startup logs the bind address, the machine
-  IP (`hostname -I`, falling back to `localhost` where unsupported, e.g. macOS),
-  the port, and the current dir.
+  Overridable via `config.server.host`. Startup logs the bind address, every machine
+  IP (`hostname -I`, falling back to `localhost` where unsupported, e.g. macOS), the
+  port, and the current dir.
+- **Advertised URL** — the `URL:`/`WebSocket:` lines use `advertisedIp()`, which
+  prefers the **`lima0`** interface. This server normally runs inside the `trudev`
+  Lima VM while the browser is on the macOS host, so the address that is actually
+  openable is the host↔VM interface — not the VM's own default route (`eth0`, which
+  is first in `hostname -I`) and not the k3s/CNI addresses. It is resolved by
+  interface *name*, not by position: `hostname -I` ordering shifts as interfaces
+  appear and disappear, so any fixed index is only accidentally right. Falls back to
+  the first `hostname -I` address when `lima0` is absent (bare Linux server), then to
+  `localhost`.
 - **Embedded web bundle** — the built web UI is embedded into the server via a
   generated module `server/web-bundle.generated.ts` (each `dist-web/` file inlined
   as base64). `serveStatic` serves from this embedded map first, so the UI travels
@@ -220,6 +234,49 @@ for the trureact workbench). Behaviour beyond the transport contract:
   only when nothing is embedded yet (dev before a build). The generated module is
   committed (unlike `dist-web/`, which is gitignored). When no bundle is embedded
   or on disk, `/` serves a human-readable status page.
+
+## 10a-dev. Development mode (`npm run dev` → `run.sh`)
+
+`npm run dev` runs `run.sh`, which brings up the full stack with hot reload on both
+sides against a target app checkout:
+
+- **Frontend** — `node esbuild.web.mjs` (watch) rebundles `web/` → `dist-web/` and
+  regenerates `server/web-bundle.generated.ts` on every change.
+- **Backend** — `npx tsx watch server/index.ts` restarts the server on every change
+  under `server/`, passing `--dir "$ACP_DIR" --port "$ACP_PORT"` and an absolute
+  `--config` (config.json lives in the repo, not in the target dir). It is run with
+  `--exclude server/web-bundle.generated.ts`: the esbuild watcher rewrites that file
+  on every frontend edit, so without the exclusion a `.tsx` change would restart the
+  backend and drop in-flight agent sessions.
+- **Target** — `ACP_DIR` (default `$WORKBENCH_DIR/trureact`, with `WORKBENCH_DIR`
+  defaulting to `$HOME/workbench`) and `ACP_PORT` (default 4096) are overridable:
+  `ACP_DIR=/path/to/app ACP_PORT=4097 ./run.sh`. A missing target dir aborts with a
+  message rather than starting a half-configured server.
+- **Env** — `ACP_ENV` (default `$WORKBENCH_DIR/.env`) is passed through as an absolute
+  `--env`, so it is loaded before the chdir and is independent of `ACP_DIR` (§5). The
+  target checkout's own `.env` is never read. A missing file only warns, since keys
+  may be supplied externally through the environment.
+
+Process handling (all three constraints are load-bearing — see the comments in
+`run.sh` before changing any of them):
+
+- The watchers must **not** run under `setsid` or `set -m`. Detaching them into their
+  own session/process groups stops `wait` from tracking them and stops a terminal
+  Ctrl-C from reaching them, leaving them orphaned holding `$ACP_PORT`.
+- `cleanup` runs under `set +e`. It is full of probing kills and tests that are
+  expected to fail (already-dead PIDs, empty `ps` output); under the script's `set -e`
+  the first non-zero status aborts cleanup midway and leaks the server.
+- `tsx`'s actual server is a **grandchild** under `npx` (`npm exec` → `tsx` → server)
+  that renames itself to `MainThread`, so it is unreachable by process name and three
+  generations below the watcher PID. `kill_tree` therefore walks the subtree
+  recursively (a single `pkill -P` misses the lower generations), and as a backstop
+  cleanup reaps whatever still holds `$ACP_PORT` (looked up via `ss`, which reports
+  PIDs for processes we own).
+
+The main loop polls the two watcher PIDs rather than using `wait -n`: under `set -e`
+a bare `wait -n` bypasses the trap when a child exits non-zero, while `wait -n || true`
+swallows the exit and then blocks on the *remaining* child — both leave half a stack
+running. Polling means either watcher exiting takes the whole script down.
 
 **Build the web UI + regenerate the embed module:** `npm run build:web`
 (`node esbuild.web.mjs production`). This builds `dist-web/` **and** rewrites
