@@ -24,9 +24,49 @@ ACP_DIR="${ACP_DIR:-$WORKBENCH_DIR/trureact}"
 ACP_PORT="${ACP_PORT:-4096}"
 ACP_ENV="${ACP_ENV:-$WORKBENCH_DIR/.env}"
 
+# ---- preflight ------------------------------------------------------------
+#
+# This script is the in-VM development entry point. It expects to run inside the
+# `trudev` Lima VM, against an app checkout in the workbench. Both conditions are
+# checked up front: failing here with an explanation beats starting a server that
+# advertises an unreachable URL or serves a directory that is not an app.
+
+if ! ip -o link show lima0 >/dev/null 2>&1; then
+	cat >&2 <<-EOF
+		✗ no lima0 interface — this does not look like the trudev Lima VM.
+
+		  run.sh is the in-VM development entry point. It must run INSIDE the VM,
+		  not on the macOS host: the URL it advertises is the lima0 host↔VM address,
+		  which only exists in the guest.
+
+		  From the trustable-app repo on the macOS host:
+		    ./start.sh          # provision/boot the Lima VM (trudev)
+		    ./ssh.sh            # shell into it
+		  then, inside the VM:
+		    ./setup.sh          # one-time: ops/go/node/opencode + MCP servers, .env
+		    cd trustable-acp && ./run.sh
+
+		  If you are deliberately running outside Lima, use 'npm run serve' instead —
+		  it has no VM assumptions.
+	EOF
+	exit 1
+fi
+
 if [ ! -d "$ACP_DIR" ]; then
-	echo "✗ target directory does not exist: $ACP_DIR" >&2
-	echo "  set ACP_DIR or WORKBENCH_DIR to point at a real app checkout" >&2
+	cat >&2 <<-EOF
+		✗ no app checkout at $ACP_DIR
+
+		  run.sh serves an app from the workbench; that directory has to exist first.
+		  The workbench checkout is created by launching the app from the Trustable
+		  UI (which clones \$WORKSPACE_DIR/workspace/<name> into \$WORKBENCH_DIR/<name>).
+
+		  Either launch the app once from the Trustable UI, or point this run at an
+		  existing checkout:
+		    ACP_DIR=/path/to/app ./run.sh
+
+		  Available in ${WORKBENCH_DIR}:
+		$(ls -1 "$WORKBENCH_DIR" 2>/dev/null | sed 's/^/    /' || echo "    (workbench dir ${WORKBENCH_DIR} does not exist)")
+	EOF
 	exit 1
 fi
 
