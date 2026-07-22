@@ -18,8 +18,9 @@
 #     setup.sh + pi.version + dist-bin/truacp.cjs
 #
 # it installs a complete, working truacp into ~/.local/bin — no package.json, no
-# node_modules, no install-bin.sh, no network beyond npm for the agents. That is
-# what makes it dropable into a Docker layer.
+# node_modules, no secondary installer, no network beyond npm for the agents.
+# Keeping setup.sh as the sole installer prevents the image and source workflows
+# from silently drifting to different launcher formats.
 #
 # With no package.json AND no bundle, phases 2 and 3 are both skipped and the
 # script exits 0 after phase 1: the runtime-only mode for layers that need the
@@ -211,9 +212,8 @@ fi
 #
 # Self-contained: this phase needs nothing but the bundle itself, so a machine
 # with only setup.sh, pi.version and dist-bin/truacp.cjs can install a complete,
-# working truacp. install-bin.sh is NOT required (it exists so `npm run build`
-# can do the same install standalone); the logic is duplicated here deliberately
-# rather than sourced, to keep that three-file deployment viable.
+# working truacp. Installation deliberately lives only here so source, VM, and
+# image builds all generate the same launchers from the same implementation.
 #
 # The bundle is looked for next to the script first (the three-file layout), then
 # in the current directory (running from a source checkout elsewhere).
