@@ -252,6 +252,10 @@ interface ISettingsAccess {
 2. Styles in CSS / design tokens - no ad-hoc JS style manipulation
 3. Server owns Node-only APIs (`child_process`, `fs`); browser owns rendering only
 4. Minimize `any` - use proper types
+5. Every behavioral change must add or update a nearby code comment explaining
+   its runtime or compatibility rationale. Comments must capture why the change
+   is necessary, not restate the implementation; generated files, tests, and
+   mechanical renames are exempt when the production boundary is documented.
 
 ### Naming Conventions
 - Types: `kebab-case.ts` in `types/`

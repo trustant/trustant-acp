@@ -3,9 +3,9 @@
 `setup.sh` is the one-shot bootstrap for the standalone ACP client. It runs three
 ordered phases:
 
-1. **Install components** — the coding agents and their ACP adapters, globally
-   via npm. The package list and its pinned versions live entirely in
-   [pi.version](pi.version).
+1. **Install components** — coding agents and ACP adapters globally via npm,
+   then Pi extensions through `pi install` so Pi actually registers them. The
+   package list and pins live entirely in [pi.version](pi.version).
 2. **Build** — *only if there is a `package.json` in the current directory*:
    builds `dist-web/` (the web UI) and `dist-bin/truacp.cjs` (the server bundle).
 3. **Install** — copies the bundle to `~/.local/lib/truacp` and writes the
@@ -61,7 +61,8 @@ offline. Each adapter drives an underlying CLI that must also be on PATH.
 | Codex | `@openai/codex` + `@agentclientprotocol/codex-acp` | `codex` |
 | Pi | `@earendil-works/pi-coding-agent` + `pi-acp` | `pi` |
 
-Pi additionally gets two extensions to the `pi` CLI (not ACP adapters):
+Pi additionally gets two extensions to the `pi` CLI (not ACP adapters),
+registered by `pi install` rather than only copied by global npm:
 `pi-mcp-adapter` for MCP server support, and `pi-web-access` for web search, URL
 fetching, repo cloning, and PDF/video extraction. `pi-web-access` needs a search
 provider key (OpenAI, Brave, Tavily, Exa, …) configured in Pi before its tools
@@ -85,9 +86,9 @@ hardcoded in `setup.sh`.** Each line is a literal npm install spec,
 pi-acp@0.0.31
 ```
 
-`setup.sh` reads the file, passes the specs straight to `npm install -g`, and
-prints the table of what it pinned. Upgrading an agent is therefore a one-line
-edit here — the script never needs to change.
+`setup.sh` reads the file, passes CLI/ACP specs to `npm install -g`, and registers
+the two Pi extension specs as `npm:<package>@<version>` with `pi install`.
+Upgrading an agent or extension is therefore a one-line edit here.
 
 **Every entry must carry a version.** An unpinned spec would silently resolve to
 latest and break build reproducibility, so the script treats it as an error and
@@ -104,9 +105,8 @@ the resolved versions. Install goes into npm's global prefix when
 `<prefix>/lib/node_modules` is writable, otherwise into `--prefix "$HOME/.local"`
 (bins land in `~/.local/bin`) so `npm install -g` never needs `sudo`. It warns
 when `~/.local/bin` is not already on PATH. A single `npm install -g --force`
-covers the whole package list, so npm resolves the dependency set once and
-re-runs stay idempotent (stale bin links from a previously-installed adapter get
-overwritten).
+covers CLI and ACP packages. Pi extensions are skipped when the exact pinned
+source is already present in `pi list`, keeping re-runs idempotent.
 
 ## Phases 2 and 3 — build and install
 

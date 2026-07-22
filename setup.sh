@@ -5,9 +5,8 @@
 #
 # Three ordered phases:
 #
-#   1. Install components — the CLI + ACP adapter for each supported agent,
-#      globally via npm. The package list and their pinned versions live in
-#      ./pi.version; nothing is hardcoded in this script.
+#   1. Install components — CLI + ACP adapters globally via npm, then register
+#      Pi extensions through `pi install`. Every pin lives in ./pi.version.
 #   2. Build — ONLY if a package.json exists in the current directory. Produces
 #      dist-web/ (the web UI) and dist-bin/truacp.cjs (the server bundle).
 #   3. Install — copies the bundle to ~/.local/lib/truacp and writes the
@@ -65,6 +64,8 @@ echo "Using: node $(node -v), npm $(npm -v)"
 # The ACP adapters are what config.json spawns (`npx -y <adapter>`); installing
 # them globally makes launches instant and lets them work offline. Each adapter
 # drives an underlying CLI that must also be on PATH: `claude`, `codex`, `pi`.
+# Pi extensions differ: their npm package must also be recorded by `pi install`
+# before Pi loads the extension.
 #
 # The package list lives entirely in ./pi.version — one literal npm install spec
 # (`<module>@<version>`) per line, comments and blanks ignored. Nothing is
@@ -105,17 +106,35 @@ for pkg in $PACKAGES; do
 	printf '  %-45s %s\n' "${pkg%@*}" "${pkg##*@}"
 done
 
+# Pi extensions are not activated by a global npm install alone: Pi loads only
+# packages recorded by `pi install`. Keep them in the shared version manifest,
+# but provision them through Pi after the CLI itself has been installed.
+GLOBAL_PACKAGES=""
+PI_EXTENSION_PACKAGES=""
+for pkg in $PACKAGES; do
+	case "$pkg" in
+	pi-mcp-adapter@* | pi-web-access@*)
+		PI_EXTENSION_PACKAGES="$PI_EXTENSION_PACKAGES $pkg"
+		;;
+	*)
+		GLOBAL_PACKAGES="$GLOBAL_PACKAGES $pkg"
+		;;
+	esac
+done
+
 # Choose an install prefix that does not require root. If npm's global
 # lib/node_modules is writable, use it as-is; otherwise install into a
 # user-level prefix at ~/.local (bin ends up in ~/.local/bin, conventionally on
 # PATH in this project's VM and image). This keeps `npm install -g` sudo-free.
 GLOBAL_PREFIX=$(npm config get prefix)
 PREFIX_ARGS=""
+INSTALL_PREFIX="$GLOBAL_PREFIX"
 if [ -w "$GLOBAL_PREFIX/lib/node_modules" ]; then
 	echo "Installing into global prefix: $GLOBAL_PREFIX"
 else
-	PREFIX_ARGS="--prefix $HOME/.local"
-	echo "Global prefix not writable — installing into user prefix: $HOME/.local"
+	INSTALL_PREFIX="$HOME/.local"
+	PREFIX_ARGS="--prefix $INSTALL_PREFIX"
+	echo "Global prefix not writable — installing into user prefix: $INSTALL_PREFIX"
 fi
 
 case ":$PATH:" in
@@ -126,16 +145,42 @@ esac
 echo "Installing agents + ACP adapters…"
 echo
 
-# Single global install so npm resolves the dependency set once. --force lets a
-# re-run overwrite bin links left by a previously-installed adapter (e.g. the
-# deprecated @zed-industries/codex-acp), keeping the script idempotent.
-# shellcheck disable=SC2086 # PREFIX_ARGS and PACKAGES are deliberately split.
-npm install -g --force $PREFIX_ARGS $PACKAGES
+# One global install resolves the CLI/ACP dependency set once. Pi extensions
+# are deliberately excluded because only `pi install` registers them with Pi.
+# --force keeps re-runs idempotent when stale adapter bin links are present.
+# shellcheck disable=SC2086 # Both variables are deliberately word-split specs.
+npm install -g --force $PREFIX_ARGS $GLOBAL_PACKAGES
+
+# Resolve the Pi binary from the prefix just populated instead of assuming the
+# caller has already refreshed PATH. This is required in fresh VM/image builds.
+PI_BIN="$INSTALL_PREFIX/bin/pi"
+if [ ! -x "$PI_BIN" ]; then
+	PI_BIN=$(command -v pi || true)
+fi
+if [ -z "$PI_BIN" ] || [ ! -x "$PI_BIN" ]; then
+	echo "✗ pi CLI was installed but its executable could not be located." >&2
+	exit 1
+fi
+
+# `pi install` persists each pinned extension in ~/.pi/agent/settings.json and
+# installs it in Pi's own package directory. Checking `pi list` first avoids an
+# unnecessary registry operation on every idempotent setup.sh run.
+PI_PACKAGE_LIST=$($PI_BIN list 2>/dev/null || true)
+for pkg in $PI_EXTENSION_PACKAGES; do
+	source="npm:$pkg"
+	if printf '%s\n' "$PI_PACKAGE_LIST" | grep -Fq "$source"; then
+		echo "Pi extension already registered: $source"
+	else
+		echo "Registering Pi extension: $source"
+		"$PI_BIN" install "$source" --no-approve
+		PI_PACKAGE_LIST=$($PI_BIN list 2>/dev/null || true)
+	fi
+done
 
 echo
 # Every spec is pinned, so the manifest is the record of what was installed —
 # no need to ask the registry (`npm view` reports latest, not what landed).
-echo "✓ Installed $(printf '%s\n' "$PACKAGES" | grep -c '^') pinned packages."
+echo "✓ Provisioned $(printf '%s\n' "$PACKAGES" | grep -c '^') pinned packages."
 
 # ---------------------------------------------------------------------------
 # Phase 2 — build (only with a package.json in the current directory)

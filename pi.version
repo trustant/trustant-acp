@@ -21,7 +21,8 @@
 @earendil-works/pi-coding-agent@0.80.10
 pi-acp@0.0.31
 
-# Pi extensions — extend the `pi` CLI itself; never spawned by config.json.
+# Pi extensions — setup.sh registers these with `pi install`; a plain global
+# npm installation would put their files on disk without activating them.
 # pi-web-access additionally needs a search-provider key configured in Pi.
 pi-mcp-adapter@2.11.0
 pi-web-access@0.13.0

@@ -327,9 +327,9 @@ esbuild itself, at build time.
 `./setup.sh` (or `npm run setup:agents`) is the one-shot bootstrap. It runs three
 ordered phases:
 
-1. **Install components** — the **CLI + ACP adapter** for each of the three
-   supported agents (Claude Code, Codex, Pi), globally via npm. The package list
-   and its pinned versions come entirely from `pi.version`.
+1. **Install components** — the **CLI + ACP adapter** for each supported agent
+   globally via npm, then register Pi extensions through `pi install`. The
+   package list and pinned versions come entirely from `pi.version`.
 2. **Build** — *only if a `package.json` exists in the current directory*:
    `dist-web/` (web UI) and `dist-bin/truacp.cjs` (server bundle).
 3. **Install** — the bundle into `~/.local/lib/truacp` plus the launcher scripts
@@ -382,9 +382,10 @@ The agents and their adapters:
 - The adapters are what `config.json` spawns via `npx -y <adapter>`; a global install
   makes launches instant/offline. The CLIs are the binaries the adapters exec.
   `pi-acp` is **not** self-contained — it requires the `pi` binary on PATH.
-- **Pi extensions.** Two further packages are installed alongside Pi and extend the
-  `pi` CLI itself (they are not ACP adapters and are never spawned directly by
-  `config.json`):
+- **Pi extensions.** Two further packages extend the `pi` CLI itself (they are
+  not ACP adapters and are never spawned directly by `config.json`). They must
+  be registered through `pi install`; a global npm install alone leaves them
+  unavailable to Pi:
   - `pi-mcp-adapter` — MCP (Model Context Protocol) support for Pi, letting it
     consume MCP servers as tool sources.
   - `pi-web-access` — web search, URL fetching, GitHub repo cloning, and
@@ -481,26 +482,29 @@ The chat UI connects to a default agent and lets the user switch:
 
 Each agent is configured/authenticated through its **own native mechanism** (its
 login CLI or config file) — there is no side-store; the server just drives those.
-Configuration is surfaced **automatically on agent select** (pi probes
-with a hello and pops a form on failure; codex/claude check login and pop the auth
-flow) and can be re-triggered anytime via a **⚙️ gear** in the header: for
-pi it reopens the endpoint form (base URL + API key), for codex/claude it
-restarts the login flow (renew login). The gear reconfigures without forcing a
-reconnect; the new settings apply on the next connect.
+Configuration is surfaced **automatically on agent select** (standalone pi
+probes `/models` and pops a form on failure; codex/claude check login and pop the
+auth flow) and can be re-triggered anytime via a **⚙️ gear** in the header. In a
+Trustable-managed runtime (`TRUSTABLE_MANAGED_RUNTIME=1`), Pi configuration is
+owned by Trustable: failures and the gear direct the user to Trustable's main
+Configure screen instead of opening the standalone credential form.
 
 **Pi — try-then-ask, written to pi's native config.** Pi has no headless auth
 CLI, and it does *not* honor `OPENAI_BASE_URL` (verified: it always hits
 platform.openai.com). A custom OpenAI-compatible endpoint is configured through
-pi's own `~/.pi/agent/models.json` — a custom provider (`trustable`) with
-`baseUrl` + `api: "openai-completions"` + `apiKey` + a model id (per pi's
-models.md). pi-acp then discovers it via `get_available_models`.
+pi's native `~/.pi/agent/models.json` and `auth.json`: the custom provider
+(`trustable`) keeps endpoint/models plus a `$OPENAI_API_KEY` reference in
+models.json, while the real credential lives only in auth.json. pi-acp then
+discovers them through Pi's native configuration.
 The UI flow is **"try, then ask"**: on selecting pi, the server probes the
 configured endpoint with `GET <baseUrl>/models` (`POST /api/pi/hello`) — a fast
 reachability + auth check that avoids the multi-second hang a real completion can
 cause on cold/large models (e.g. Ollama). If it lists models, the session starts.
-If not, a popup collects **only Base URL + API key**; `POST /api/pi/config/set`
-fetches `/models`, picks the first model, writes the provider into models.json,
-and the probe is retried before connecting. (`server/pi-config.ts`.)
+If not, standalone mode opens a popup collecting **only Base URL + API key**;
+`POST /api/pi/config/set` fetches `/models`, writes endpoint/models to
+models.json and the key to auth.json, then retries the probe. The config GET API
+never returns the stored key. Managed mode shows the Trustable Configure message
+instead. (`server/pi-config.ts`.)
 
 **Codex — ChatGPT device-code login.** Codex authenticates out-of-band via the
 `codex` CLI (not via ACP). On selecting codex, the UI calls
@@ -533,6 +537,12 @@ and refreshed on `config_option_update`. Changing it calls
 `setSessionConfigOption(model, value)`. This is the standard ACP channel, so it
 works for any agent that exposes model options (claude: Opus/Sonnet/Haiku; others
 after their endpoint/login is configured).
+
+For Pi, Trustable owns the provider boundary. Pi settings contain
+`enabledModels: ["trustable/*"]`, and the TruACP header retains only option
+values with that prefix. Both controls are required because pi-acp currently
+publishes Pi's full built-in provider catalog in `configOptions` even when model
+cycling is scoped by `enabledModels`.
 
 New REST endpoints: `POST /api/pi/hello`, `/api/pi/config/{get,set}`,
 `/api/codex/login-status`, `/api/codex/login-device`,
@@ -624,5 +634,3 @@ New REST endpoints: `GET /api/directory`, `POST /api/directory`.
 
 - **Phase 1**: from a terminal, server spawns `claude` in a chosen cwd, completes `initialize`→`newSession`→`sendPrompt`, and streams `agent_message_chunk`s to stdout. Repeat for `codex` and `pi`.
 - **End-to-end**: open `localhost:PORT`, start a chat, send a prompt, see streamed response + a tool call with diff, approve a permission, fork/resume a session, export to markdown. `config.json` alone (plus `.env`) fully configures agents, cwd, and display.
-
-

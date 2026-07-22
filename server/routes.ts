@@ -229,6 +229,9 @@ export const routes = {
 	},
 
 	// ---- pi provider config (native ~/.pi/agent/models.json) --------------
+	// OpenCode endpoint routes are intentionally absent: Pi is the managed
+	// coding runtime, so retaining the old routes would expose dead UI paths and
+	// imply that an OpenCode executable is still installed.
 
 	"POST /api/pi/hello": async (): Promise<PiHelloResult> => piHello(),
 

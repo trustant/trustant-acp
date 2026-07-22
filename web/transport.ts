@@ -225,8 +225,8 @@ export class AcpTransport {
 
 	// ---- per-agent config + auth (endpoint/login popups) ------------------
 
-	/** Probe pi connectivity with a one-shot hello prompt. */
-	async piHello(): Promise<{ ok: boolean; detail: string }> {
+	/** Probe Pi endpoint/auth quickly through its configured /models catalog. */
+	async piHello(): Promise<{ ok: boolean; detail: string; managed: boolean }> {
 		return this.call("/api/pi/hello");
 	}
 

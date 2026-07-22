@@ -17,8 +17,8 @@ import React, {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { SessionUpdate, SessionConfigOption } from "../src/types/session";
-import { flattenConfigSelectOptions } from "../src/types/session";
 import { AcpTransport, type AgentInfo } from "./transport";
+import { trustableModelChoices } from "./model-options";
 
 // ---- view model -----------------------------------------------------------
 
@@ -83,6 +83,8 @@ interface ClaudeAuthModal {
 // ---- component ------------------------------------------------------------
 
 const transport = new AcpTransport("");
+const MANAGED_PI_CONFIG_MESSAGE =
+	"Pi is configured by Trustable. Return to the Trustable application list and use Configure to change the endpoint, API key, or model.";
 
 export function ChatApp(): React.ReactElement {
 	const [agents, setAgents] = useState<AgentInfo[]>([]);
@@ -251,6 +253,12 @@ export function ChatApp(): React.ReactElement {
 					/auth|api key|unauthor|invalid|provider/i.test(msg)
 				) {
 					const agent = id as "pi";
+					const hello = await endpointHello(agent).catch(() => null);
+					if (hello?.managed) {
+						setBusy(false);
+						setError(`${MANAGED_PI_CONFIG_MESSAGE} (${msg})`);
+						return;
+					}
 					const cfg = await endpointConfigGet(agent).catch(() => ({}));
 					setBusy(false);
 					setError(`${agent} connection failed: ${msg}`);
@@ -268,7 +276,7 @@ export function ChatApp(): React.ReactElement {
 				setBusy(false);
 			}
 		},
-		[endpointConfigGet],
+		[endpointConfigGet, endpointHello],
 	);
 
 	/**
@@ -278,7 +286,8 @@ export function ChatApp(): React.ReactElement {
 	 * Before connecting, agents with prerequisites are gated:
 	 *  - **claude** needs a login (or ANTHROPIC_API_KEY). If not authenticated,
 	 *    the paste-code OAuth popup opens.
-	 *  - **pi** must actually answer: a hello probe runs first; if it fails,
+	 *  - **pi** must expose its configured model catalog: a hello probe runs
+	 *    first; if it fails,
 	 *    the endpoint config popup (base URL + API key + model) opens and, on
 	 *    save, writes the agent's native config and retries.
 	 *  - **codex** needs a ChatGPT login. If `codex login status` reports not
@@ -317,10 +326,20 @@ export function ChatApp(): React.ReactElement {
 						return;
 					}
 				} else if (id === "pi") {
-					// Try a real hello; only ask for config if it doesn't answer.
+					// Probe endpoint reachability/auth through /models; avoid a real
+					// completion here because cold coding models can stall the UI.
 					const agent = id as "pi";
 					const hello = await endpointHello(agent);
 					if (!hello.ok) {
+						// Trustable owns provider credentials in managed mode. Opening
+						// TruACP's standalone form would duplicate or expose that secret.
+						if (hello.managed) {
+							setBusy(false);
+							setError(
+								`${MANAGED_PI_CONFIG_MESSAGE} (${hello.detail})`,
+							);
+							return;
+						}
 						const cfg = await endpointConfigGet(agent).catch(
 							() => ({}),
 						);
@@ -493,6 +512,11 @@ export function ChatApp(): React.ReactElement {
 		try {
 			if (agentId === "pi") {
 				const agent = agentId as "pi";
+				const hello = await endpointHello(agent);
+				if (hello.managed) {
+					setError(MANAGED_PI_CONFIG_MESSAGE);
+					return;
+				}
 				const cfg = await endpointConfigGet(agent).catch(() => ({}));
 				setEndpointCfg({
 					agent,
@@ -521,7 +545,7 @@ export function ChatApp(): React.ReactElement {
 		} catch (e) {
 			setError(String((e as Error).message ?? e));
 		}
-	}, [agentId, endpointConfigGet]);
+	}, [agentId, endpointConfigGet, endpointHello]);
 
 	const agentName = useMemo(
 		() => agents.find((a) => a.id === agentId)?.displayName ?? agentId,
@@ -539,8 +563,11 @@ export function ChatApp(): React.ReactElement {
 		return opt && opt.type === "select" ? opt : null;
 	}, [configOptions]);
 
+	// pi-acp advertises Pi's full built-in catalog even when settings.json has
+	// enabledModels=["trustable/*"]. Mirror that runtime allowlist here so the
+	// user cannot select an OpenAI or other non-Trustable provider from the UI.
 	const modelChoices = useMemo(
-		() => (modelOption ? flattenConfigSelectOptions(modelOption.options) : []),
+		() => trustableModelChoices(modelOption),
 		[modelOption],
 	);
 
@@ -586,7 +613,7 @@ export function ChatApp(): React.ReactElement {
 					<span className="status">● {agentName}</span>
 				) : null}
 				{/* Model selector (config options exposed after connect). */}
-				{ready && modelOption && (
+				{ready && modelOption && modelChoices.length > 0 && (
 					<select
 						className="model-select"
 						title="Model"
