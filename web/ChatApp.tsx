@@ -48,13 +48,13 @@ interface PendingPermission {
 }
 
 /**
- * OpenAI-compatible endpoint form (base URL + API key + model) shared by the
- * agents configured through their own native config file: **pi** (models.json)
- * and **opencode** (opencode.jsonc). `agent` selects which. `pendingConnect` =
- * opened during agent select (connect after save).
+ * OpenAI-compatible endpoint form (base URL + API key + model) for agents
+ * configured through their own native config file: **pi** (models.json).
+ * `agent` selects which. `pendingConnect` = opened during agent select
+ * (connect after save).
  */
 interface EndpointConfigModal {
-	agent: "pi" | "opencode";
+	agent: "pi";
 	baseUrl: string;
 	apiKey: string;
 	pendingConnect: boolean;
@@ -214,30 +214,19 @@ export function ChatApp(): React.ReactElement {
 		});
 	}
 
-	// Endpoint-config helpers routed to the right agent (pi or opencode). Both
-	// follow the same "hello probe + native-config write" contract.
+	// Endpoint-config helpers for agents that follow the "hello probe +
+	// native-config write" contract (currently pi).
 	const endpointHello = useCallback(
-		(agent: "pi" | "opencode") =>
-			agent === "pi"
-				? transport.piHello()
-				: transport.opencodeHello(),
+		(_agent: "pi") => transport.piHello(),
 		[],
 	);
 	const endpointConfigGet = useCallback(
-		(agent: "pi" | "opencode") =>
-			agent === "pi"
-				? transport.piConfigGet()
-				: transport.opencodeConfigGet(),
+		(_agent: "pi") => transport.piConfigGet(),
 		[],
 	);
 	const endpointConfigSet = useCallback(
-		(
-			agent: "pi" | "opencode",
-			cfg: { baseUrl: string; apiKey: string },
-		) =>
-			agent === "pi"
-				? transport.piConfigSet(cfg)
-				: transport.opencodeConfigSet(cfg),
+		(_agent: "pi", cfg: { baseUrl: string; apiKey: string }) =>
+			transport.piConfigSet(cfg),
 		[],
 	);
 
@@ -256,12 +245,12 @@ export function ChatApp(): React.ReactElement {
 				setReady(true);
 			} catch (e) {
 				const msg = String((e as Error).message ?? e);
-				// pi/opencode with a saved-but-invalid endpoint: reopen config.
+				// pi with a saved-but-invalid endpoint: reopen config.
 				if (
-					(id === "pi" || id === "opencode") &&
+					id === "pi" &&
 					/auth|api key|unauthor|invalid|provider/i.test(msg)
 				) {
-					const agent = id as "pi" | "opencode";
+					const agent = id as "pi";
 					const cfg = await endpointConfigGet(agent).catch(() => ({}));
 					setBusy(false);
 					setError(`${agent} connection failed: ${msg}`);
@@ -289,9 +278,9 @@ export function ChatApp(): React.ReactElement {
 	 * Before connecting, agents with prerequisites are gated:
 	 *  - **claude** needs a login (or ANTHROPIC_API_KEY). If not authenticated,
 	 *    the paste-code OAuth popup opens.
-	 *  - **pi** / **opencode** must actually answer: a hello probe runs first;
-	 *    if it fails, the endpoint config popup (base URL + API key + model)
-	 *    opens and, on save, writes the agent's native config and retries.
+	 *  - **pi** must actually answer: a hello probe runs first; if it fails,
+	 *    the endpoint config popup (base URL + API key + model) opens and, on
+	 *    save, writes the agent's native config and retries.
 	 *  - **codex** needs a ChatGPT login. If `codex login status` reports not
 	 *    logged in, the device-auth popup opens and connection waits until the
 	 *    user confirms completion.
@@ -327,9 +316,9 @@ export function ChatApp(): React.ReactElement {
 						});
 						return;
 					}
-				} else if (id === "pi" || id === "opencode") {
+				} else if (id === "pi") {
 					// Try a real hello; only ask for config if it doesn't answer.
-					const agent = id as "pi" | "opencode";
+					const agent = id as "pi";
 					const hello = await endpointHello(agent);
 					if (!hello.ok) {
 						const cfg = await endpointConfigGet(agent).catch(
@@ -416,8 +405,8 @@ export function ChatApp(): React.ReactElement {
 	);
 
 	/**
-	 * Save the endpoint config (pi models.json / opencode.jsonc), verify with a
-	 * hello probe, then connect if the popup was gating one.
+	 * Save the endpoint config (pi models.json), verify with a hello probe,
+	 * then connect if the popup was gating one.
 	 */
 	const saveEndpointConfig = useCallback(async () => {
 		if (!endpointCfg) return;
@@ -496,14 +485,14 @@ export function ChatApp(): React.ReactElement {
 
 	/**
 	 * Gear action: reconfigure/re-authenticate the current agent WITHOUT
-	 * reconnecting (pendingConnect=false). pi/opencode reopen the endpoint form
+	 * reconnecting (pendingConnect=false). pi reopens the endpoint form
 	 * (base URL + API key); codex/claude restart their login flow.
 	 */
 	const openConfig = useCallback(async () => {
 		setError(null);
 		try {
-			if (agentId === "pi" || agentId === "opencode") {
-				const agent = agentId as "pi" | "opencode";
+			if (agentId === "pi") {
+				const agent = agentId as "pi";
 				const cfg = await endpointConfigGet(agent).catch(() => ({}));
 				setEndpointCfg({
 					agent,
@@ -612,10 +601,9 @@ export function ChatApp(): React.ReactElement {
 						))}
 					</select>
 				)}
-				{/* Gear: reconfigure endpoint (pi/opencode) or renew login
+				{/* Gear: reconfigure endpoint (pi) or renew login
 				    (codex/claude) for the selected agent. */}
 				{(agentId === "pi" ||
-					agentId === "opencode" ||
 					agentId === "codex" ||
 					agentId === "claude") && (
 					<button
@@ -649,7 +637,7 @@ export function ChatApp(): React.ReactElement {
 				>
 					<div className="modal" onClick={(e) => e.stopPropagation()}>
 						<div className="modal-title">
-							Configure {endpointCfg.agent === "pi" ? "Pi" : "OpenCode"}
+							Configure Pi
 						</div>
 						<p className="modal-desc">
 							Couldn't connect. Enter an OpenAI-compatible endpoint:

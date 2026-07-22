@@ -67,17 +67,13 @@ export const DEFAULT_CONFIG: StandaloneConfig = {
 		pi: {
 			id: "pi",
 			displayName: "Pi",
-			command: "npx",
-			args: ["-y", "pi-acp"],
+			// Use the globally installed `pi-acp` binary directly (setup.sh
+			// installs it): launches are instant and work offline, unlike `npx`.
+			// `pi-acp` takes no flags.
+			command: "pi-acp",
+			args: [],
 			env: [],
 			apiKeyEnvVar: "PI_API_KEY",
-		},
-		opencode: {
-			id: "opencode",
-			displayName: "OpenCode",
-			command: "opencode",
-			args: ["acp"],
-			env: [],
 		},
 	},
 	customAgents: [],

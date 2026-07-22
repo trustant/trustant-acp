@@ -18,13 +18,6 @@ import {
 	type PiHelloResult,
 } from "./pi-config";
 import {
-	readOpencodeConfig,
-	writeOpencodeProvider,
-	opencodeHello,
-	type OpencodeConfig,
-	type OpencodeHelloResult,
-} from "./opencode-config";
-import {
 	codexLoginStatus,
 	codexStartDeviceAuth,
 	type CodexLoginStatus,
@@ -250,29 +243,6 @@ export const routes = {
 		body: PiConfig,
 	): Promise<{ ok: true }> => {
 		await writePiProvider({
-			baseUrl: body.baseUrl ?? "",
-			apiKey: body.apiKey ?? "",
-			model: body.model ?? "",
-		});
-		return { ok: true };
-	},
-
-	// ---- opencode provider config (native opencode.jsonc) -----------------
-
-	"POST /api/opencode/hello": async (): Promise<OpencodeHelloResult> =>
-		opencodeHello(),
-
-	"POST /api/opencode/config/get": async (): Promise<{
-		config: Partial<OpencodeConfig>;
-	}> => ({
-		config: await readOpencodeConfig(),
-	}),
-
-	"POST /api/opencode/config/set": async (
-		_ctx: RouteContext,
-		body: OpencodeConfig,
-	): Promise<{ ok: true }> => {
-		await writeOpencodeProvider({
 			baseUrl: body.baseUrl ?? "",
 			apiKey: body.apiKey ?? "",
 			model: body.model ?? "",

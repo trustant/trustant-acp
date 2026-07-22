@@ -826,7 +826,7 @@ export function ChatPanel({
 		logger,
 	]);
 
-	// Some agents (e.g. OpenCode) emit trailing message chunks *after* end_turn,
+	// Some agents emit trailing message chunks *after* end_turn,
 	// so the turn-end save above runs before they arrive and the persisted copy
 	// is truncated. Re-save when messages change while idle, debounced so rapid
 	// trailing updates coalesce into a single write (avoids racing the file). (#320)

@@ -14,7 +14,7 @@
 		"dev:web": "node esbuild.web.mjs",
 		"start": "node esbuild.web.mjs production && tsx server/index.ts",
 		"build:server": "node esbuild.server.mjs",
-		"build": "npm run build:web && npm run build:server && bash install-bin.sh",
+		"build": "npm run build:web && npm run build:server && sh install-bin.sh",
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",

@@ -1,7 +1,7 @@
 # trustable-acp - LLM Developer Guide
 
 ## Overview
-`trustable-acp` is a standalone ACP client (local Node server + browser React UI) for AI agent interaction (Claude Code, Codex, Pi, OpenCode, custom agents) via the Agent Client Protocol. See [SPEC.md](SPEC.md) for the full specification — it is the source of truth.
+`trustable-acp` is a standalone ACP client (local Node server + browser React UI) for AI agent interaction (Pi, Claude Code, Codex, custom agents) via the Agent Client Protocol. See [SPEC.md](SPEC.md) for the full specification — it is the source of truth.
 
 **Tech**: React 19, TypeScript, Node server, Agent Client Protocol (ACP)
 
@@ -12,7 +12,7 @@ src/
 ├── types/                       # Type definitions (no logic, no dependencies)
 │   ├── chat.ts                  # ChatMessage, MessageContent, PromptContent, AttachedFile, ActivePermission
 │   ├── session.ts               # ChatSession, SessionUpdate (12-type union), SessionInfo, Capabilities
-│   ├── agent.ts                 # AgentConfig, agent settings (Claude/Codex/Pi/OpenCode/Custom)
+│   ├── agent.ts                 # AgentConfig, agent settings (Pi/Claude/Codex/Custom)
 │   └── errors.ts                # AcpError, ProcessError, ErrorInfo
 ├── acp/                         # ACP protocol (SDK dependency confined here)
 │   ├── acp-client.ts            # Process lifecycle, UI-facing API (AcpClient class)
@@ -320,8 +320,7 @@ interface ISettingsAccess {
 **Agents** (see SPEC.md §10b/§10d):
 - Claude Code: `@agentclientprotocol/claude-agent-acp` (ANTHROPIC_API_KEY)
 - Codex: `@agentclientprotocol/codex-acp` (OPENAI_API_KEY)
-- Pi: `pi-acp` (PI_API_KEY)
-- OpenCode: native `opencode acp` (no adapter)
+- Pi: `pi-acp` (PI_API_KEY) — the default agent
 - Custom: Any ACP-compatible agent
 
 ---

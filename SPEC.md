@@ -250,8 +250,19 @@ sides against a target app checkout:
   backend and drop in-flight agent sessions.
 - **Target** — `ACP_DIR` (default `$WORKBENCH_DIR/trureact`, with `WORKBENCH_DIR`
   defaulting to `$HOME/workbench`) and `ACP_PORT` (default 4096) are overridable:
-  `ACP_DIR=/path/to/app ACP_PORT=4097 ./run.sh`. A missing target dir aborts with a
-  message rather than starting a half-configured server.
+  `ACP_DIR=/path/to/app ACP_PORT=4097 ./run.sh`.
+- **Preflight** — before starting anything, `run.sh` aborts (exit 1) with an
+  explanation of the prerequisite when either condition fails:
+  1. **No `lima0` interface** — `run.sh` is the *in-VM* entry point, and the URL it
+     advertises is the `lima0` host↔VM address, which exists only in the guest.
+     Running it on the macOS host would serve an unreachable URL. The message points
+     at `./start.sh` → `./ssh.sh` → `./setup.sh`, and notes that `npm run serve` is
+     the VM-agnostic alternative. Note this is stricter than the server binary
+     itself: `advertisedIp()` (§10a) *falls back* when `lima0` is absent, so bare
+     Linux server builds keep working — only the dev script hard-fails.
+  2. **No app checkout at `ACP_DIR`** — the workbench checkout is created by
+     launching the app from the Trustable UI. The message lists what *is* present in
+     `$WORKBENCH_DIR` so the right `ACP_DIR` is obvious.
 - **Env** — `ACP_ENV` (default `$WORKBENCH_DIR/.env`) is passed through as an absolute
   `--env`, so it is loaded before the chdir and is independent of `ACP_DIR` (§5). The
   target checkout's own `.env` is never read. A missing file only warns, since keys
@@ -292,20 +303,55 @@ artifact and installs a launcher on PATH:
    `dist-bin/truacp.cjs`: everything (ws, ACP SDK, the embedded web UI) inlined,
    only Node builtins external, minified, with a `#!/usr/bin/env node` shebang.
 3. `install-bin.sh` — copies the bundle to `~/.local/lib/truacp/truacp.cjs` and
-   writes a launcher `~/.local/bin/truacp` (`exec node <bundle> "$@"`) that forwards
-   all flags (`--port`, `--dir`, `--config`, …). It warns if `~/.local/bin` is not on
-   PATH.
+   writes **launcher shell scripts** at `~/.local/bin/truacp`,
+   `~/.local/bin/trustable-acp`, and `dist-bin/trustable-acp`. Each is a
+   `#!/bin/sh` wrapper doing `exec node <bundle> "$@"`, forwarding all flags
+   (`--port`, `--dir`, `--config`, …). It warns if `~/.local/bin` is not on PATH.
 
 The result is invoked as `truacp [--port <n>] [--dir <path>] …`. Because the web UI
 is embedded, the single `.cjs` needs no `dist-web/` or `node_modules` at runtime —
 just a Node runtime. esbuild is platform-specific, so run the build in the `trudev`
 VM.
 
-## 10b. Agent installation (`setup.sh`)
+**The launchers are portable shell scripts, not compiled binaries.** `node` is
+assumed to be on PATH and is resolved at run time, so a launcher is
+architecture-independent: the same bytes work on any platform with a Node
+runtime, which is what lets the Trustable Docker image install one without
+shipping a platform-specific executable. An earlier revision emitted a native
+single-file executable at `dist-bin/trustable-acp`; that is gone, and the path now
+holds the shell script. The only platform-specific part of the pipeline is
+esbuild itself, at build time.
 
-`./setup.sh` (or `npm run setup:agents`) installs the **CLI + ACP adapter** for
-each of the three supported agents — Claude Code, Codex, and Pi — globally via
-npm. Each adapter drives an underlying CLI that must be on PATH.
+## 10b. Setup (`setup.sh`)
+
+`./setup.sh` (or `npm run setup:agents`) is the one-shot bootstrap. It runs three
+ordered phases:
+
+1. **Install components** — the **CLI + ACP adapter** for each of the three
+   supported agents (Claude Code, Codex, Pi), globally via npm. The package list
+   and its pinned versions come entirely from `pi.version`.
+2. **Build** — *only if a `package.json` exists in the current directory*:
+   `dist-web/` (web UI) and `dist-bin/truacp.cjs` (server bundle).
+3. **Install** — the bundle into `~/.local/lib/truacp` plus the launcher scripts
+   into `~/.local/bin`, whenever a bundle is present (freshly built or prebuilt).
+
+The script is portable **POSIX `sh`** — no bashisms, no arrays — so a Dockerfile
+can `COPY` it and `RUN` it under the default `/bin/sh`. `set -eu` is in effect,
+so any failing step aborts it.
+
+**Self-contained.** `setup.sh` depends on no other file in the repo. Given only
+
+```
+setup.sh + pi.version + dist-bin/truacp.cjs
+```
+
+it installs a complete, working truacp into `~/.local/bin` — no `package.json`,
+no `node_modules`, no `install-bin.sh`, and no network beyond npm for the agents.
+Phase 3 therefore duplicates `install-bin.sh`'s logic rather than sourcing it;
+that duplication is deliberate and load-bearing, since sourcing would break the
+three-file deployment. `install-bin.sh` remains only so `npm run build` (§10a)
+can perform the same install standalone. Changes to the launcher format must be
+applied to both.
 
 ### Preflight
 
@@ -313,19 +359,17 @@ The script runs a preflight before installing anything and **aborts with a
 non-zero status** on the first failed check, so a wrong environment fails loudly
 instead of half-installing:
 
-1. **Linux only** — `uname -s` must be `Linux`. Any other platform (macOS,
-   Windows) aborts with a message pointing at the `trudev` VM, which is where
-   the supported environment lives. The script does not attempt a
-   platform-specific fallback.
-2. **Node.js already installed and on PATH** — `node` must resolve via
+1. **Node.js already installed and on PATH** — `node` must resolve via
    `command -v`. The script is an agent installer, **not** a Node installer: it
    never downloads, upgrades, or version-manages a runtime. A missing `node`
    aborts with an instruction to install it first.
-3. **npm on PATH** — `npm` must likewise resolve; it is the mechanism every
+2. **npm on PATH** — `npm` must likewise resolve; it is the mechanism every
    install below uses.
 
 On success the preflight prints the resolved `node -v` / `npm -v` so the
-versions in play are visible in the log.
+versions in play are visible in the log. There is deliberately **no OS gate**:
+the script must run in a Docker build layer as well as in the `trudev` VM, and
+the two checks above are the only environmental requirements it actually has.
 
 The agents and their adapters:
 
@@ -357,6 +401,61 @@ The agents and their adapters:
   `OPENAI_API_KEY`, `PI_API_KEY`; see `.env.example`).
 - After running it, **restart the server** so the newly-installed binaries are on
   the server process's inherited PATH.
+
+### The version manifest (`pi.version`)
+
+`pi.version`, next to `setup.sh`, is the **single source of truth for which
+packages are installed and at which versions**. Nothing is hardcoded in the
+script: it reads the manifest and passes the specs straight to `npm install -g`,
+so upgrading an agent is a one-line edit to this file.
+
+Each line is a **literal npm install spec**, `<module>@<version>`. `#` comments
+and blank lines are ignored:
+
+```
+@anthropic-ai/claude-code@2.1.216
+@agentclientprotocol/claude-agent-acp@0.60.0
+@openai/codex@0.144.6
+@agentclientprotocol/codex-acp@1.1.4
+@earendil-works/pi-coding-agent@0.80.10
+pi-acp@0.0.31
+pi-mcp-adapter@2.11.0
+pi-web-access@0.13.0
+```
+
+**Every entry must be pinned.** An unpinned spec would silently resolve to latest
+and defeat build reproducibility, so `setup.sh` rejects it and exits non-zero
+instead of falling back. Detection strips the leading `@` of a scoped name before
+looking for a version separator, so `@scope/name` is correctly read as unpinned
+while `@scope/name@1.2.3` is pinned. A missing, empty, or comment-only manifest
+is likewise a hard error.
+
+The file is read relative to the *script's* directory, not the current directory,
+so the pins apply in runtime-only mode too.
+
+### Build and install phases
+
+The two phases are gated **independently** — that is what makes the three-file
+deployment above work:
+
+| Working directory holds | Phase 2 (build) | Phase 3 (install) |
+|---|---|---|
+| `package.json` + sources | builds the bundle | installs what it built |
+| a prebuilt `truacp.cjs` only | skipped | installs the prebuilt bundle |
+| neither | skipped | skipped — agents only, exit **0** |
+
+The build gate tests the **current** directory, so `cd trustable-acp &&
+./setup.sh` builds while `./trustable-acp/setup.sh` from the parent does not. The
+bundle lookup is the reverse: it prefers the **script's** directory
+(`<script dir>/dist-bin/truacp.cjs`, then `<script dir>/truacp.cjs`) before the
+current one, so a copied-out three-file set installs correctly regardless of the
+invoking cwd. A missing bundle is not an error — it is the runtime-only mode.
+
+With a `package.json` present, phase 2 runs `npm ci` (falling back to `npm
+install`), then `npm run build:web` and `npm run build:server`. Because esbuild's
+binaries are platform-specific, the build phase must run where they match — in
+this project's setup, the `trudev` VM or the image build. Phase 3 has no such
+constraint: it only copies a file and writes shell scripts.
 
 ## 10c. Web UI agent selection (`web/ChatApp.tsx`)
 

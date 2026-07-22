@@ -1,15 +1,55 @@
-# setup.sh — agent installation
+# setup.sh — install, build, install
 
-`setup.sh` installs the coding agents used by the standalone ACP client, plus
-their ACP adapters, globally via npm, then installs this project's own
-dependencies and builds it. It is a one-shot bootstrap script: run it once on a
-new machine (or inside the `trudev` VM) before starting the server.
+`setup.sh` is the one-shot bootstrap for the standalone ACP client. It runs three
+ordered phases:
+
+1. **Install components** — the coding agents and their ACP adapters, globally
+   via npm. The package list and its pinned versions live entirely in
+   [pi.version](pi.version).
+2. **Build** — *only if there is a `package.json` in the current directory*:
+   builds `dist-web/` (the web UI) and `dist-bin/truacp.cjs` (the server bundle).
+3. **Install** — copies the bundle to `~/.local/lib/truacp` and writes the
+   launcher scripts to `~/.local/bin`. Runs whenever a bundle is present, whether
+   phase 2 just built it or it shipped prebuilt.
 
 ```bash
-./setup.sh
+./setup.sh          # or: sh setup.sh
 ```
 
-## What it installs
+It is portable POSIX `sh` — no bashisms, no arrays — so a Dockerfile can `COPY`
+it and `RUN` it under the default `/bin/sh`. `node` and `npm` are assumed to be
+on PATH; this script installs agents, never a runtime.
+
+## Self-contained deployment
+
+`setup.sh` needs **no other file from this repo**. Given just three files:
+
+```
+setup.sh
+pi.version
+dist-bin/truacp.cjs
+```
+
+it installs a complete, working `truacp` into `~/.local/bin` — no `package.json`,
+no `node_modules`, no `install-bin.sh`, and no network access beyond npm for the
+agents. That is what makes it dropable into a Docker layer:
+
+```dockerfile
+COPY setup.sh pi.version ./
+COPY dist-bin/truacp.cjs dist-bin/
+RUN sh setup.sh
+```
+
+With no `package.json` the build phase is skipped, and phase 3 installs the
+prebuilt bundle directly. The bundle is looked for next to the script first
+(`<script dir>/dist-bin/truacp.cjs`, then `<script dir>/truacp.cjs`) and then in
+the current directory, so both the three-file layout and a source checkout work.
+
+`install-bin.sh` still exists so that `npm run build` performs the same install on
+its own, but `setup.sh` never calls it — the install logic is deliberately
+duplicated to keep this three-file deployment viable.
+
+## Phase 1 — components
 
 The adapters are what [config.json](config.json) actually spawns (`npx -y
 <adapter>`); installing them globally makes launches instant and lets them work
@@ -30,25 +70,89 @@ work — this script installs the package but sets no credentials.
 For Codex, `@zed-industries/codex-acp` is deprecated in favour of the
 `@agentclientprotocol` scope.
 
-## Behaviour
+### The version manifest (`pi.version`)
 
-1. **npm check** — exits with a non-zero status if `npm` is not on PATH, then
-   prints the resolved node/npm versions.
-2. **Prefix selection** — reads `npm config get prefix`. If
-   `<prefix>/lib/node_modules` is writable, installs there as-is. Otherwise it
-   falls back to `--prefix "$HOME/.local"` (bins land in `~/.local/bin`) so
-   `npm install -g` never needs `sudo`. In the fallback case it warns if
-   `~/.local/bin` is not already on PATH.
-3. **Install** — a single `npm install -g --force` over the whole package list,
-   so npm resolves the dependency set once. `--force` makes re-runs idempotent
-   by allowing bin links from a previously-installed adapter (e.g. the
-   deprecated `@zed-industries/codex-acp`) to be overwritten.
-4. **Report** — prints each package with its version from `npm view`.
-5. **Project build** — `cd`s to the repo root (the script's own directory), then
-   runs `npm install` for this project's dependencies followed by
-   `npm run build`, so the server is ready to serve immediately afterwards.
+**Every package and version lives in [pi.version](pi.version) — none are
+hardcoded in `setup.sh`.** Each line is a literal npm install spec,
+`<module>@<version>`; `#` comments and blank lines are ignored:
 
-`set -euo pipefail` is in effect, so any failing step aborts the script.
+```
+# Claude Code — CLI + ACP adapter
+@anthropic-ai/claude-code@2.1.216
+@agentclientprotocol/claude-agent-acp@0.60.0
+...
+@earendil-works/pi-coding-agent@0.80.10
+pi-acp@0.0.31
+```
+
+`setup.sh` reads the file, passes the specs straight to `npm install -g`, and
+prints the table of what it pinned. Upgrading an agent is therefore a one-line
+edit here — the script never needs to change.
+
+**Every entry must carry a version.** An unpinned spec would silently resolve to
+latest and break build reproducibility, so the script treats it as an error and
+aborts rather than falling back. A scoped name without a version
+(`@anthropic-ai/claude-code`) is correctly detected as unpinned — the leading `@`
+of the scope is not mistaken for a version separator. A missing, empty, or
+comment-only manifest likewise aborts.
+
+The file is read relative to the *script's* directory rather than the current
+one, so the pins apply in runtime-only mode too (see below).
+
+Preflight: the script exits non-zero if `node` or `npm` is missing, then prints
+the resolved versions. Install goes into npm's global prefix when
+`<prefix>/lib/node_modules` is writable, otherwise into `--prefix "$HOME/.local"`
+(bins land in `~/.local/bin`) so `npm install -g` never needs `sudo`. It warns
+when `~/.local/bin` is not already on PATH. A single `npm install -g --force`
+covers the whole package list, so npm resolves the dependency set once and
+re-runs stay idempotent (stale bin links from a previously-installed adapter get
+overwritten).
+
+## Phases 2 and 3 — build and install
+
+The two phases are gated independently, which is what allows the three-file
+deployment above:
+
+| In the working directory | Phase 2 (build) | Phase 3 (install) |
+|---|---|---|
+| `package.json` + sources | builds the bundle | installs what it built |
+| prebuilt `dist-bin/truacp.cjs` only | skipped | installs the prebuilt bundle |
+| neither | skipped | skipped — agents only, exit 0 |
+
+The build check is against the *current* directory, not the script's own — so
+`cd trustable-acp && ./setup.sh` builds, while `./trustable-acp/setup.sh` from
+the parent does not. The bundle lookup is the opposite way round: it prefers the
+*script's* directory (`<script dir>/dist-bin/truacp.cjs`, then
+`<script dir>/truacp.cjs`) before the current one, so a copied-out three-file set
+installs correctly no matter where it is invoked from. With neither sources nor a
+bundle, the script exits 0 after phase 1 — the runtime-only mode for image layers
+that need the agents but not the server.
+
+With a `package.json` present, phase 2 runs `npm ci` (falling back to `npm
+install`), then `npm run build:web` and `npm run build:server`. Phase 3 then
+installs, producing:
+
+| Path | What |
+|---|---|
+| `~/.local/lib/truacp/truacp.cjs` | the bundled server, web UI embedded |
+| `~/.local/bin/truacp` | launcher shell script |
+| `~/.local/bin/trustable-acp` | the same launcher, long name |
+
+(`install-bin.sh`, used by `npm run build`, additionally drops the same launcher
+at `dist-bin/trustable-acp` inside the build output.)
+
+**The launchers are portable shell scripts, not compiled binaries.** Each is a
+four-line `#!/bin/sh` wrapper that does `exec node <bundle> "$@"`, forwarding all
+flags (`--port`, `--dir`, `--config`, …). They are architecture-independent, so
+the same file works wherever `node` is on PATH — which is what lets the Trustable
+Docker image install them without shipping a platform-specific executable. An
+earlier revision emitted a single-file native binary at `dist-bin/trustable-acp`;
+that is gone, and the path now holds the shell script.
+
+Note that esbuild's own binaries *are* platform-specific, so phase 2 must run
+where they match — in this project's setup, inside the `trudev` VM.
+
+`set -eu` is in effect, so any failing step aborts the script.
 
 ## What it does *not* do
 
@@ -59,10 +163,11 @@ API keys are not handled here. Set them in `.env` (copy from
 ## Next steps
 
 ```bash
-npm run serve            # or: npm run serve:trureact
+truacp --port 4096 --dir /path/to/app     # the installed launcher
+npm run serve                             # or run from source
 ```
 
 ## Where it runs
 
-Anywhere `node`/`npm` are on PATH — the host machine or inside the `trudev`
-Lima VM.
+Anywhere `node`/`npm` are on PATH — the host machine, inside the `trudev` Lima
+VM, or a Docker build layer.

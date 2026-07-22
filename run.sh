@@ -43,7 +43,7 @@ if ! ip -o link show lima0 >/dev/null 2>&1; then
 		    ./start.sh          # provision/boot the Lima VM (trudev)
 		    ./ssh.sh            # shell into it
 		  then, inside the VM:
-		    ./setup.sh          # one-time: ops/go/node/opencode + MCP servers, .env
+		    ./setup.sh          # one-time: ops/go/node/pi-acp + MCP servers, .env
 		    cd trustable-acp && ./run.sh
 
 		  If you are deliberately running outside Lima, use 'npm run serve' instead —
