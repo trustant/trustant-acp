@@ -17,9 +17,8 @@
 @openai/codex@0.144.6
 @agentclientprotocol/codex-acp@1.1.4
 
-# Pi — CLI + ACP adapter (pi-acp spawns the `pi` binary from the CLI package)
+# Pi CLI. The ACP adapter is built from the pinned nested fork by setup.sh.
 @earendil-works/pi-coding-agent@0.80.10
-pi-acp@0.0.31
 
 # Pi extensions — setup.sh registers these with `pi install`; a plain global
 # npm installation would put their files on disk without activating them.

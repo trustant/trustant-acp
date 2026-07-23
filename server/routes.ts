@@ -45,6 +45,7 @@ import type {
 	ConfigOptionRequest,
 	ConfigOptionResponse,
 	ListSessionsResponse,
+	DeleteAgentSessionRequest,
 	PermissionResponse,
 	SavedSessionsResponse,
 	SavedMessagesResponse,
@@ -184,6 +185,18 @@ export const routes = {
 	): Promise<ListSessionsResponse> => {
 		const client = ctx.host.requireClient(body.agentId);
 		return { result: await client.listSessions(body.cwd, body.cursor) };
+	},
+
+	"POST /api/session/delete": async (
+		ctx: RouteContext,
+		body: DeleteAgentSessionRequest,
+	): Promise<{ ok: true }> => {
+		const client = ctx.host.requireClient(body.agentId);
+		// WHY: Pi owns the canonical session file. Remove it through ACP first;
+		// only then clear TruACP's secondary metadata to avoid a ghost Pi entry.
+		await client.deleteSession(body.sessionId);
+		await ctx.store.deleteSession(body.sessionId);
+		return { ok: true };
 	},
 
 	"POST /api/permission/respond": async (

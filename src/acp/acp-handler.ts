@@ -6,6 +6,44 @@ import type { PermissionManager } from "./permission-handler";
 import type { TerminalManager } from "./terminal-handler";
 import type { Logger } from "../utils/logger";
 
+interface PiActivityMetadata {
+	version: 1;
+	state: string;
+	label: string;
+	active: boolean;
+	timestamp: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function readPiActivity(value: unknown): PiActivityMetadata | undefined {
+	if (!isRecord(value)) return undefined;
+	const meta = value["_meta"];
+	if (!isRecord(meta)) return undefined;
+	const piAcp = meta["piAcp"];
+	if (!isRecord(piAcp)) return undefined;
+	const activity = piAcp["activity"];
+	if (
+		!isRecord(activity) ||
+		activity["version"] !== 1 ||
+		typeof activity["state"] !== "string" ||
+		typeof activity["label"] !== "string" ||
+		typeof activity["active"] !== "boolean" ||
+		typeof activity["timestamp"] !== "string"
+	) {
+		return undefined;
+	}
+	return {
+		version: 1,
+		state: activity["state"],
+		label: activity["label"],
+		active: activity["active"],
+		timestamp: activity["timestamp"],
+	};
+}
+
 /**
  * Handles incoming ACP protocol events from the agent.
  *
@@ -129,14 +167,20 @@ export class AcpHandler {
 				});
 				break;
 
-			case "session_info_update":
+			case "session_info_update": {
+				// WHY: ACP standard session info has no activity field yet. The
+				// fork publishes a versioned metadata extension so the standalone
+				// UI can show real Pi state without turning it into chat text.
+				const activity = readPiActivity(update);
 				this.emitSessionUpdate({
 					type: "session_info_update",
 					sessionId,
 					title: update.title,
 					updatedAt: update.updatedAt,
+					activity,
 				});
 				break;
+			}
 
 			case "usage_update":
 				this.emitSessionUpdate({

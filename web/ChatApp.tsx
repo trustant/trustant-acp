@@ -16,7 +16,11 @@ import React, {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { SessionUpdate, SessionConfigOption } from "../src/types/session";
+import type {
+	SessionUpdate,
+	SessionConfigOption,
+	SessionInfo,
+} from "../src/types/session";
 import { AcpTransport, type AgentInfo } from "./transport";
 import { managedModelChoices } from "./model-options";
 
@@ -45,6 +49,13 @@ interface PendingPermission {
 	requestId: string;
 	title: string;
 	options: { optionId: string; name: string }[];
+}
+
+interface ActivityState {
+	state: string;
+	label: string;
+	active: boolean;
+	timestamp: string;
 }
 
 /**
@@ -93,10 +104,26 @@ export function ChatApp(): React.ReactElement {
 	const [projectDir, setProjectDir] = useState<string>("");
 	const [ready, setReady] = useState(false);
 	const [busy, setBusy] = useState(false);
+	const [running, setRunning] = useState(false);
+	const [stopping, setStopping] = useState(false);
+	const [activity, setActivity] = useState<ActivityState | null>(null);
+	const [elapsedSeconds, setElapsedSeconds] = useState(0);
 	const [error, setError] = useState<string | null>(null);
 	const [turns, setTurns] = useState<Turn[]>([]);
-	const [permission, setPermission] = useState<PendingPermission | null>(null);
+	const [permission, setPermission] = useState<PendingPermission | null>(
+		null,
+	);
 	const [input, setInput] = useState("");
+	const [historyOpen, setHistoryOpen] = useState(false);
+	const [historyLoading, setHistoryLoading] = useState(false);
+	const [sessions, setSessions] = useState<SessionInfo[]>([]);
+	const [deleteCandidate, setDeleteCandidate] = useState<SessionInfo | null>(
+		null,
+	);
+	const [deletingSessionId, setDeletingSessionId] = useState<string | null>(
+		null,
+	);
+	const [historyError, setHistoryError] = useState<string | null>(null);
 
 	// Session config options (model/mode/…) exposed by the agent after connect.
 	const [configOptions, setConfigOptions] = useState<SessionConfigOption[]>(
@@ -111,6 +138,7 @@ export function ChatApp(): React.ReactElement {
 	const [claudeAuth, setClaudeAuth] = useState<ClaudeAuthModal | null>(null);
 
 	const sessionRef = useRef<string | null>(null);
+	const activityStartedAtRef = useRef<number | null>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
 
 	// Load agent catalog. The server's defaultAgentId (pi by default) is
@@ -139,6 +167,34 @@ export function ChatApp(): React.ReactElement {
 		const el = scrollRef.current;
 		if (el) el.scrollTop = el.scrollHeight;
 	}, [turns, permission]);
+
+	// WHY: provider silence is normal during long reasoning. A local elapsed
+	// clock proves the request is still active without inventing a completion
+	// percentage or adding heartbeat text to the transcript.
+	useEffect(() => {
+		if (!running) {
+			activityStartedAtRef.current = null;
+			setElapsedSeconds(0);
+			return;
+		}
+		if (activityStartedAtRef.current === null) {
+			activityStartedAtRef.current = Date.now();
+		}
+		const updateElapsed = () =>
+			setElapsedSeconds(
+				Math.max(
+					0,
+					Math.floor(
+						(Date.now() -
+							(activityStartedAtRef.current ?? Date.now())) /
+							1000,
+					),
+				),
+			);
+		updateElapsed();
+		const timer = window.setInterval(updateElapsed, 1000);
+		return () => window.clearInterval(timer);
+	}, [running]);
 
 	const applyUpdate = useCallback((u: SessionUpdate) => {
 		switch (u.type) {
@@ -185,8 +241,17 @@ export function ChatApp(): React.ReactElement {
 			case "config_option_update":
 				setConfigOptions(u.configOptions);
 				break;
+			case "session_info_update":
+				if (u.activity) {
+					setActivity(u.activity);
+					setRunning(u.activity.active);
+					if (!u.activity.active) setStopping(false);
+				}
+				break;
 			case "process_error":
 				setError(`${u.error.title}: ${u.error.message}`);
+				setRunning(false);
+				setStopping(false);
 				break;
 			default:
 				break;
@@ -259,7 +324,9 @@ export function ChatApp(): React.ReactElement {
 						setError(`${MANAGED_PI_CONFIG_MESSAGE} (${msg})`);
 						return;
 					}
-					const cfg = await endpointConfigGet(agent).catch(() => ({}));
+					const cfg = await endpointConfigGet(agent).catch(
+						() => ({}),
+					);
 					setBusy(false);
 					setError(`${agent} connection failed: ${msg}`);
 					setEndpointCfg({
@@ -304,6 +371,9 @@ export function ChatApp(): React.ReactElement {
 			sessionRef.current = null;
 			setReady(false);
 			setConfigOptions([]);
+			setRunning(false);
+			setStopping(false);
+			setActivity(null);
 			setEndpointCfg(null);
 			setCodexAuth(null);
 			setClaudeAuth(null);
@@ -392,22 +462,152 @@ export function ChatApp(): React.ReactElement {
 	const send = useCallback(async () => {
 		const text = input.trim();
 		const sessionId = sessionRef.current;
-		if (!text || !sessionId) return;
+		if (!text || !sessionId || running) return;
 		setInput("");
 		setTurns((prev) => [
 			...prev,
 			{ kind: "user", id: `u-${prev.length}`, text },
 		]);
-		setBusy(true);
+		setRunning(true);
+		setActivity({
+			state: "thinking",
+			label: "Thinking",
+			active: true,
+			timestamp: new Date().toISOString(),
+		});
 		setError(null);
 		try {
 			await transport.sendPrompt(sessionId, [{ type: "text", text }]);
 		} catch (e) {
 			setError(String((e as Error).message ?? e));
 		} finally {
+			setRunning(false);
+			setStopping(false);
+			setActivity({
+				state: "idle",
+				label: "Idle",
+				active: false,
+				timestamp: new Date().toISOString(),
+			});
+		}
+	}, [input, running]);
+
+	const stop = useCallback(async () => {
+		const sessionId = sessionRef.current;
+		if (!sessionId || !running || stopping) return;
+		setStopping(true);
+		setActivity({
+			state: "stopping",
+			label: "Stopping",
+			active: true,
+			timestamp: new Date().toISOString(),
+		});
+		try {
+			await transport.cancel(sessionId);
+		} catch (e) {
+			setStopping(false);
+			setError(`Stop failed: ${String((e as Error).message ?? e)}`);
+		}
+	}, [running, stopping]);
+
+	const newChat = useCallback(async () => {
+		if (!agentId || busy || running) return;
+		setBusy(true);
+		setError(null);
+		try {
+			const session = await transport.newSession(agentId, projectDir);
+			sessionRef.current = session.sessionId;
+			setTurns([]);
+			setPermission(null);
+			setConfigOptions(session.configOptions ?? []);
+			setActivity(null);
+			setReady(true);
+		} catch (e) {
+			setError(String((e as Error).message ?? e));
+		} finally {
 			setBusy(false);
 		}
-	}, [input]);
+	}, [agentId, busy, projectDir, running]);
+
+	const openHistory = useCallback(async () => {
+		if (!agentId || !ready || running) return;
+		setHistoryOpen(true);
+		setHistoryLoading(true);
+		setDeleteCandidate(null);
+		setHistoryError(null);
+		setError(null);
+		try {
+			const result = await transport.listSessions(agentId, projectDir);
+			setSessions(result.sessions);
+		} catch (e) {
+			setError(String((e as Error).message ?? e));
+		} finally {
+			setHistoryLoading(false);
+		}
+	}, [agentId, projectDir, ready, running]);
+
+	const closeHistory = useCallback(() => {
+		if (deletingSessionId) return;
+		setHistoryOpen(false);
+		setDeleteCandidate(null);
+		setHistoryError(null);
+	}, [deletingSessionId]);
+
+	const deleteHistorySession = useCallback(async () => {
+		if (!agentId || !deleteCandidate || deletingSessionId || running)
+			return;
+		const sessionId = deleteCandidate.sessionId;
+		if (sessionRef.current === sessionId) {
+			setHistoryError(
+				"Start a new session before deleting the active session.",
+			);
+			return;
+		}
+
+		setDeletingSessionId(sessionId);
+		setHistoryError(null);
+		try {
+			// WHY: delete through the agent-owned ACP session API first. The
+			// server removes TruACP's secondary index only after Pi succeeds.
+			await transport.deleteAgentSession(agentId, sessionId);
+			setSessions((current) =>
+				current.filter((session) => session.sessionId !== sessionId),
+			);
+			setDeleteCandidate(null);
+		} catch (e) {
+			setHistoryError(String((e as Error).message ?? e));
+		} finally {
+			setDeletingSessionId(null);
+		}
+	}, [agentId, deleteCandidate, deletingSessionId, running]);
+
+	const loadHistorySession = useCallback(
+		async (selected: SessionInfo) => {
+			if (!agentId || running) return;
+			setHistoryOpen(false);
+			setDeleteCandidate(null);
+			setHistoryError(null);
+			setBusy(true);
+			setTurns([]);
+			setPermission(null);
+			setError(null);
+			try {
+				const session = await transport.loadSession(
+					agentId,
+					selected.sessionId,
+					selected.cwd,
+				);
+				sessionRef.current = session.sessionId;
+				setConfigOptions(session.configOptions ?? []);
+				setReady(true);
+			} catch (e) {
+				setError(String((e as Error).message ?? e));
+			} finally {
+				setBusy(false);
+			}
+		},
+		[agentId, running],
+	);
 
 	const respond = useCallback(
 		async (optionId: string) => {
@@ -479,9 +679,7 @@ export function ChatApp(): React.ReactElement {
 		if (!claudeAuth || !claudeAuth.code.trim()) return;
 		setClaudeAuth({ ...claudeAuth, submitting: true });
 		try {
-			const status = await transport.claudeLoginComplete(
-				claudeAuth.code,
-			);
+			const status = await transport.claudeLoginComplete(claudeAuth.code);
 			if (!status.loggedIn) {
 				setError(
 					status.detail === "Invalid code"
@@ -593,11 +791,12 @@ export function ChatApp(): React.ReactElement {
 	return (
 		<div className="app">
 			<header className="topbar">
-				{/* Agent pull-down stays active so the agent can be switched at
-				    any time; changing it reconnects to the new agent. */}
+				{/* Keep agent/model/config changes frozen during a live turn:
+				    switching the transport underneath an in-flight Pi request
+				    would make Stop target the wrong ACP session. */}
 				<select
 					value={agentId}
-					disabled={busy}
+					disabled={busy || running}
 					onChange={(e) => void selectAgent(e.target.value)}
 				>
 					<option value="">Select agent</option>
@@ -618,7 +817,7 @@ export function ChatApp(): React.ReactElement {
 						className="model-select"
 						title="Model"
 						value={modelOption.currentValue}
-						disabled={busy}
+						disabled={busy || running}
 						onChange={(e) => void setModel(e.target.value)}
 					>
 						{modelChoices.map((o) => (
@@ -640,15 +839,34 @@ export function ChatApp(): React.ReactElement {
 								? "Renew login"
 								: "Reconfigure endpoint"
 						}
-						disabled={busy}
+						disabled={busy || running}
 						onClick={() => void openConfig()}
 					>
 						⚙
 					</button>
 				)}
-				<span className="cwd" title={projectDir}>
-					{projectDir}
-				</span>
+				{ready && (
+					<>
+						<button
+							className="secondary header-action new-session-action"
+							title="Start a new session"
+							disabled={busy || running}
+							onClick={() => void newChat()}
+						>
+							New session
+						</button>
+						{agentId === "pi" && (
+							<button
+								className="secondary header-action"
+								title="Resume a Pi session"
+								disabled={busy || running}
+								onClick={() => void openHistory()}
+							>
+								Sessions
+							</button>
+						)}
+					</>
+				)}
 			</header>
 
 			{error && (
@@ -663,12 +881,10 @@ export function ChatApp(): React.ReactElement {
 					onClick={() => setEndpointCfg(null)}
 				>
 					<div className="modal" onClick={(e) => e.stopPropagation()}>
-						<div className="modal-title">
-							Configure Pi
-						</div>
+						<div className="modal-title">Configure Pi</div>
 						<p className="modal-desc">
-							Couldn't connect. Enter an OpenAI-compatible endpoint:
-							server base URL and API key.
+							Couldn't connect. Enter an OpenAI-compatible
+							endpoint: server base URL and API key.
 						</p>
 						<label className="modal-field">
 							<span>Base URL</span>
@@ -725,7 +941,10 @@ export function ChatApp(): React.ReactElement {
 			)}
 
 			{codexAuth && (
-				<div className="modal-backdrop" onClick={() => setCodexAuth(null)}>
+				<div
+					className="modal-backdrop"
+					onClick={() => setCodexAuth(null)}
+				>
 					<div className="modal" onClick={(e) => e.stopPropagation()}>
 						<div className="modal-title">Sign in to Codex</div>
 						<p className="modal-desc">
@@ -757,7 +976,9 @@ export function ChatApp(): React.ReactElement {
 								onClick={() => void confirmCodexLogin()}
 								disabled={codexAuth.checking}
 							>
-								{codexAuth.checking ? "Checking…" : "Ho completato"}
+								{codexAuth.checking
+									? "Checking…"
+									: "Ho completato"}
 							</button>
 						</div>
 					</div>
@@ -827,6 +1048,126 @@ export function ChatApp(): React.ReactElement {
 				</div>
 			)}
 
+			{historyOpen && (
+				<div className="modal-backdrop" onClick={closeHistory}>
+					<div
+						className="modal history-modal"
+						onClick={(e) => e.stopPropagation()}
+					>
+						<div className="modal-title">Pi sessions</div>
+						<p className="modal-desc">
+							Resume a session stored by Pi for this workbench.
+						</p>
+						{historyError && (
+							<div className="session-error" role="alert">
+								{historyError}
+							</div>
+						)}
+						<div className="session-list">
+							{historyLoading ? (
+								<div className="empty">Loading sessions…</div>
+							) : sessions.length === 0 ? (
+								<div className="empty">
+									No resumable sessions found.
+								</div>
+							) : (
+								sessions.map((session) => (
+									<div
+										key={session.sessionId}
+										className="session-row"
+									>
+										<button
+											className="session-resume"
+											disabled={Boolean(
+												deletingSessionId,
+											)}
+											onClick={() =>
+												void loadHistorySession(session)
+											}
+										>
+											<span>
+												{session.title ||
+													"Untitled session"}
+											</span>
+											<small>
+												{session.updatedAt
+													? new Date(
+															session.updatedAt,
+														).toLocaleString()
+													: session.sessionId}
+											</small>
+										</button>
+										<button
+											className="session-delete"
+											aria-label={`Delete session ${
+												session.title ||
+												"Untitled session"
+											}`}
+											title={
+												session.sessionId ===
+												sessionRef.current
+													? "Start a new session before deleting the active session"
+													: "Delete session"
+											}
+											disabled={
+												Boolean(deletingSessionId) ||
+												session.sessionId ===
+													sessionRef.current
+											}
+											onClick={() => {
+												setDeleteCandidate(session);
+												setHistoryError(null);
+											}}
+										>
+											×
+										</button>
+									</div>
+								))
+							)}
+						</div>
+						{deleteCandidate && (
+							<div className="session-delete-confirm">
+								<span>
+									Delete “
+									{deleteCandidate.title ||
+										"Untitled session"}
+									” permanently?
+								</span>
+								<div>
+									<button
+										className="secondary"
+										disabled={Boolean(deletingSessionId)}
+										onClick={() => setDeleteCandidate(null)}
+									>
+										Cancel
+									</button>
+									<button
+										className="danger"
+										disabled={Boolean(deletingSessionId)}
+										onClick={() =>
+											void deleteHistorySession()
+										}
+									>
+										{deletingSessionId
+											? "Deleting…"
+											: "Delete"}
+									</button>
+								</div>
+							</div>
+						)}
+						<div className="modal-actions">
+							<button
+								className="secondary"
+								disabled={Boolean(deletingSessionId)}
+								onClick={closeHistory}
+							>
+								Close
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
 			<div className="messages" ref={scrollRef}>
 				{turns.map((t) => (
 					<TurnView key={t.id} turn={t} />
@@ -856,13 +1197,23 @@ export function ChatApp(): React.ReactElement {
 				)}
 			</div>
 
+			{running && (
+				<div className="activity" role="status" aria-live="polite">
+					<span className="activity-spinner" aria-hidden="true" />
+					<span>{activity?.label || "Working"}</span>
+					<span className="activity-elapsed">
+						{formatElapsed(elapsedSeconds)}
+					</span>
+				</div>
+			)}
+
 			<footer className="composer">
 				<textarea
 					value={input}
 					placeholder={
 						ready ? "Message the agent…" : "Please Select Agent"
 					}
-					disabled={!ready}
+					disabled={!ready || running}
 					onChange={(e) => setInput(e.target.value)}
 					onKeyDown={(e) => {
 						if (e.key === "Enter" && !e.shiftKey) {
@@ -871,12 +1222,33 @@ export function ChatApp(): React.ReactElement {
 						}
 					}}
 				/>
-				<button onClick={() => void send()} disabled={!ready || !input.trim()}>
-					Send
-				</button>
+				{running ? (
+					<button
+						className="stop"
+						onClick={() => void stop()}
+						disabled={stopping}
+					>
+						{stopping ? "Stopping…" : "Stop"}
+					</button>
+				) : (
+					<button
+						onClick={() => void send()}
+						disabled={!ready || !input.trim()}
+					>
+						Send
+					</button>
+				)}
 			</footer>
 		</div>
 	);
+}
+
+function formatElapsed(seconds: number): string {
+	const minutes = Math.floor(seconds / 60);
+	const remainder = seconds % 60;
+	return minutes > 0
+		? `${minutes}:${String(remainder).padStart(2, "0")}`
+		: `${remainder}s`;
 }
 
 // ---- turn rendering -------------------------------------------------------

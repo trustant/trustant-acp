@@ -145,9 +145,7 @@ export class AcpClient {
 		this.currentConfig = config;
 
 		// Update auto-allow permissions from plugin settings
-		this.permissionManager.setAutoAllow(
-			this.runtime.autoAllowPermissions,
-		);
+		this.permissionManager.setAutoAllow(this.runtime.autoAllowPermissions);
 
 		// Validate command
 		if (!config.command || config.command.trim().length === 0) {
@@ -415,21 +413,24 @@ export class AcpClient {
 		try {
 			this.logger.log("[AcpClient] Starting ACP initialization...");
 
-			const initResult = await this.connection.agent.request("initialize", {
-				protocolVersion: acp.PROTOCOL_VERSION,
-				clientCapabilities: {
-					fs: {
-						readTextFile: false,
-						writeTextFile: false,
+			const initResult = await this.connection.agent.request(
+				"initialize",
+				{
+					protocolVersion: acp.PROTOCOL_VERSION,
+					clientCapabilities: {
+						fs: {
+							readTextFile: false,
+							writeTextFile: false,
+						},
+						terminal: true,
 					},
-					terminal: true,
+					clientInfo: {
+						name: "obsidian-agent-client",
+						title: "Agent Client for Obsidian",
+						version: this.runtime.clientVersion,
+					},
 				},
-				clientInfo: {
-					name: "obsidian-agent-client",
-					title: "Agent Client for Obsidian",
-					version: this.runtime.clientVersion,
-				},
-			});
+			);
 
 			this.logger.log(
 				`[AcpClient] ✅ Connected to agent (protocol v${initResult.protocolVersion})`,
@@ -480,6 +481,39 @@ export class AcpClient {
 	}
 
 	/**
+	 * Versioned product extension passed only to the Pi adapter.
+	 *
+	 * WHY: Pi startup options must cross ACP as typed data rather than being
+	 * concatenated into the configured command line. Other ACP agents never see
+	 * this metadata and older pi-acp versions safely ignore it.
+	 */
+	private sessionRequestMeta(): Record<string, unknown> {
+		if (this.currentConfig?.id !== "pi") return {};
+		const managedExtension =
+			process.env.TRUSTABLE_PI_EXTENSION?.trim() || undefined;
+		return {
+			_meta: {
+				trustable: {
+					piLaunch: {
+						version: 1,
+						extensions: {
+							discover: true,
+							// WHY: setup installs the reviewed guardrail source
+							// outside user workbenches. Passing the absolute path
+							// as typed metadata makes every managed Pi session load
+							// it without accepting arbitrary browser-provided argv.
+							...(managedExtension
+								? { paths: [managedExtension] }
+								: {}),
+						},
+						skills: { discover: true },
+					},
+				},
+			},
+		};
+	}
+
+	/**
 	 * Create a new chat session with the agent.
 	 */
 	async newSession(workingDirectory: string): Promise<SessionResult> {
@@ -491,6 +525,7 @@ export class AcpClient {
 			const response = await connection.agent.request("session/new", {
 				cwd: this.toSessionCwd(workingDirectory),
 				mcpServers: [],
+				...this.sessionRequestMeta(),
 			});
 
 			this.logger.log(
@@ -546,10 +581,13 @@ export class AcpClient {
 				`[AcpClient] Sending prompt with ${content.length} content blocks`,
 			);
 
-			const promptResult = await connection.agent.request("session/prompt", {
-				sessionId: sessionId,
-				prompt: acpContent,
-			});
+			const promptResult = await connection.agent.request(
+				"session/prompt",
+				{
+					sessionId: sessionId,
+					prompt: acpContent,
+				},
+			);
 
 			this.logger.log(
 				`[AcpClient] Agent completed with: ${promptResult.stopReason}`,
@@ -887,6 +925,29 @@ export class AcpClient {
 	}
 
 	/**
+	 * Delete a persisted agent-owned session through standard ACP.
+	 */
+	async deleteSession(sessionId: string): Promise<void> {
+		const connection = this.requireConnection();
+		// WHY: the UI must create or load another session before deleting the
+		// current one, otherwise its next prompt would target a removed Pi file.
+		if (this.currentSessionId === sessionId) {
+			throw new Error(
+				"Cannot delete the active session. Start a new session first.",
+			);
+		}
+
+		try {
+			this.logger.log(`[AcpClient] Deleting session: ${sessionId}...`);
+			await connection.agent.deleteSession({ sessionId });
+			this.logger.log(`[AcpClient] Session deleted: ${sessionId}`);
+		} catch (error) {
+			this.logger.error("[AcpClient] Delete Session Error:", error);
+			throw error;
+		}
+	}
+
+	/**
 	 * Load a previous session with history replay (stable).
 	 *
 	 * Conversation history is received via onSessionUpdate callback
@@ -909,6 +970,7 @@ export class AcpClient {
 				sessionId,
 				cwd: this.toSessionCwd(cwd),
 				mcpServers: [],
+				...this.sessionRequestMeta(),
 			});
 
 			this.logger.log(`[AcpClient] Session loaded: ${sessionId}`);
@@ -949,6 +1011,7 @@ export class AcpClient {
 				sessionId,
 				cwd: this.toSessionCwd(cwd),
 				mcpServers: [],
+				...this.sessionRequestMeta(),
 			});
 
 			this.logger.log(`[AcpClient] Session resumed: ${sessionId}`);
@@ -983,6 +1046,7 @@ export class AcpClient {
 				sessionId,
 				cwd: this.toSessionCwd(cwd),
 				mcpServers: [],
+				...this.sessionRequestMeta(),
 			});
 
 			this.logger.log(

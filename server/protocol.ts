@@ -93,6 +93,12 @@ export interface ListSessionsResponse {
 	result: ListSessionsResult;
 }
 
+/** POST /api/session/delete — removes an agent-owned persisted session. */
+export interface DeleteAgentSessionRequest {
+	agentId: string;
+	sessionId: string;
+}
+
 /** POST /api/permission/respond */
 export interface PermissionResponse {
 	requestId: string;

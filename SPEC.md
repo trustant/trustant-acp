@@ -56,7 +56,7 @@ Two processes, one repo (monorepo or two build targets):
 
 - **Server owns all Node-only capabilities**: `child_process.spawn` (agents + terminals), `fs` (sessions, export, mentions), `config.json` I/O, env/secret resolution, WSL/Windows PATH logic (`platform.ts`, `paths.ts`).
 - **Browser owns rendering only**: React UI, markdown, styling. No `child_process`, no `fs`.
-- **Transport**: one **WebSocket** carries the streaming `session/update` events (the existing single `onSessionUpdate` channel serializes cleanly to WS messages) and permission/terminal requests; **REST** endpoints handle request/response calls (`initialize`, `newSession`, `sendPrompt`, `listSessions`, `loadSession`, `resumeSession`, `forkSession`, `setSessionConfigOption`, `cancel`, config get/save, session history get/delete, export).
+- **Transport**: one **WebSocket** carries the streaming `session/update` events (the existing single `onSessionUpdate` channel serializes cleanly to WS messages) and permission/terminal requests; **REST** endpoints handle request/response calls (`initialize`, `newSession`, `sendPrompt`, `listSessions`, `loadSession`, `resumeSession`, `forkSession`, agent-owned `deleteSession`, `setSessionConfigOption`, `cancel`, config get/save, local session history get/delete, export).
 - **Client-side transport shim** implements the same surface the UI expects today (an `AcpClient`-shaped facade) so `hooks/*` and `ChatPanel` change minimally — they call methods that now issue REST/WS instead of touching an in-process `AcpClient`.
 
 ### 3.1 Directory layout (proposed)
@@ -146,6 +146,8 @@ Single JSON file, loaded at server start, hot-reloadable via the settings API. S
 
 **REST** (request/response), one handler per current `AcpClient` method:
 - `POST /session/initialize`, `/session/new`, `/session/load`, `/session/resume`, `/session/fork`, `/session/list` — each accepts an optional `cwd` (see §10e); `/session/new` creates the session in `cwd ?? projectDir`.
+- `POST /session/delete` calls standard ACP `session/delete` and clears the
+  TruACP metadata only after the owning agent confirms deletion.
 - `POST /session/:id/prompt`, `/session/:id/cancel`, `/session/:id/config-option`, `/session/:id/mode`
 - `GET /api/directory` (current default cwd), `POST /api/directory` (change default cwd) — see §10e.
 - `POST /permission/:id` (approve/reject)
@@ -321,9 +323,10 @@ generation is an installation concern.
 `./setup.sh` (or `npm run setup:agents`) is the one-shot bootstrap. It runs three
 ordered phases:
 
-1. **Install components** — the **CLI + ACP adapter** for each supported agent
-   globally via npm, then register Pi extensions through `pi install`. The
-   package list and pinned versions come entirely from `pi.version`.
+1. **Install components** — the supported CLIs and upstream ACP adapters
+   globally via npm, register Pi extensions through `pi install`, and build or
+   install the pinned nested Trustable `pi-acp` fork. npm package pins live in
+   `pi.version`; the fork revision is pinned by the nested Git submodule.
 2. **Build** — *only if a `package.json` exists in the current directory*:
    `dist-web/` (web UI) and `dist-bin/truacp.cjs` (server bundle).
 3. **Install** — the bundle into `~/.local/lib/truacp` plus the launcher scripts
@@ -336,13 +339,17 @@ so any failing step aborts it.
 **Self-contained.** `setup.sh` depends on no other file in the repo. Given only
 
 ```
-setup.sh + pi.version + dist-bin/truacp.cjs
+setup.sh + pi.version + dist-bin/truacp.cjs + pi-acp-package.tgz
+    + trustable-guardrails.ts
 ```
 
 it installs a complete, working truacp into `~/.local/bin` — no `package.json`,
 no `node_modules`, no secondary installer, and no network beyond npm for the
-agents. Phase 3 is the only launcher implementation; source, VM, and image
-workflows all call it so their installed runtime cannot drift.
+remaining agents. Source mode builds the nested fork; image mode supplies the
+tarball produced from that same source revision. The fifth artifact is the
+reviewed Pi `tool_call` extension that prevents credentials from entering model
+context. Phase 3 is the only launcher implementation, so source, VM, and image
+runtimes cannot drift.
 
 ### Preflight
 
@@ -389,13 +396,11 @@ The agents and their adapters:
 - The script installs into npm's global prefix when writable, else falls back to a
   user prefix at `~/.local` (bin → `~/.local/bin`, conventionally on PATH), so no
   sudo is needed. `--force` keeps re-runs idempotent (overwrites stale bin links).
-- `pi-acp@0.0.31` performs its own registry update lookup and does not honor
-  Pi's `PI_SKIP_VERSION_CHECK` or `PI_OFFLINE` flags. After the pinned global
-  install, setup applies an idempotent compatibility guard to the installed
-  adapter so managed/offline sessions make no update request and show no
-  duplicate banner. The patch validates the expected adapter structure and
-  aborts setup if a future pin is incompatible; remove it when `pi-acp` provides
-  native support for these flags.
+- `pi-acp` comes from the nested Trustable fork, based on upstream v0.0.31. The
+  fork natively honors `PI_SKIP_VERSION_CHECK` and `PI_OFFLINE`, exposes
+  versioned launch/activity metadata, includes extension commands, and bounds
+  abort requests. `setup.sh` never falls back to the public npm adapter because
+  that would silently remove those capabilities.
 - API keys are not handled here — set them in `.env` (`ANTHROPIC_API_KEY`,
   `OPENAI_API_KEY`, `PI_API_KEY`; see `.env.example`).
 - After running it, **restart the server** so the newly-installed binaries are on
@@ -403,10 +408,11 @@ The agents and their adapters:
 
 ### The version manifest (`pi.version`)
 
-`pi.version`, next to `setup.sh`, is the **single source of truth for which
-packages are installed and at which versions**. Nothing is hardcoded in the
-script: it reads the manifest and passes the specs straight to `npm install -g`,
-so upgrading an agent is a one-line edit to this file.
+`pi.version`, next to `setup.sh`, is the source of truth for npm-installed
+packages and versions. The `pi-acp` adapter is the explicit exception: its
+source revision is the nested `pi-acp` submodule and its package version is
+recorded in that repository. This separation makes Trustable adapter changes
+reviewable without publishing a replacement npm package.
 
 Each line is a **literal npm install spec**, `<module>@<version>`. `#` comments
 and blank lines are ignored:
@@ -417,7 +423,6 @@ and blank lines are ignored:
 @openai/codex@0.144.6
 @agentclientprotocol/codex-acp@1.1.4
 @earendil-works/pi-coding-agent@0.80.10
-pi-acp@0.0.31
 pi-mcp-adapter@2.11.0
 pi-web-access@0.13.0
 ```
@@ -434,7 +439,7 @@ so the pins apply in runtime-only mode too.
 
 ### Build and install phases
 
-The two phases are gated **independently** — that is what makes the three-file
+The two phases are gated **independently** — that is what makes the five-file
 deployment above work:
 
 | Working directory holds | Phase 2 (build) | Phase 3 (install) |
@@ -447,7 +452,7 @@ The build gate tests the **current** directory, so `cd trustable-acp &&
 ./setup.sh` builds while `./trustable-acp/setup.sh` from the parent does not. The
 bundle lookup is the reverse: it prefers the **script's** directory
 (`<script dir>/dist-bin/truacp.cjs`, then `<script dir>/truacp.cjs`) before the
-current one, so a copied-out three-file set installs correctly regardless of the
+current one, so a copied-out five-file set installs correctly regardless of the
 invoking cwd. A missing bundle is not an error — it is the runtime-only mode.
 
 With a `package.json` present, phase 2 runs `npm ci` (falling back to `npm
@@ -472,9 +477,45 @@ The chat UI connects to a default agent and lets the user switch:
   (`initialize` + `newSession`) — there is no separate Connect button. During the
   attempt the header shows "Connecting…"; on success it shows "● \<agent name\>" and
   the chat becomes writable.
-- The pull-down **stays active** (disabled only while connecting), so the agent can
-  be **switched at any time**. Switching clears the prior turns/session/permission
-  and reconnects to the new agent.
+- Agent, model, and configuration controls are disabled while a turn is active,
+  because switching transports would make Stop target the wrong ACP session.
+  Once idle, switching clears the prior turns/session/permission and reconnects.
+- While Pi is active, the composer becomes a red **Stop** action. The adapter
+  publishes `piAcp.activity` metadata and the UI shows its label plus elapsed
+  time. This is activity, not a fabricated percentage: Pi does not expose a
+  reliable total-work denominator.
+- **New session** is the prominent, non-wrapping header action that creates a
+  fresh session in the current cwd. **Sessions** lists resumable Pi sessions and
+  loads the selected one through ACP `session/load`. The managed header does not
+  render the launch-time cwd: an app is already scoped to its workbench and the
+  absolute server path provides no useful user action.
+- Each non-active session row has a separate `×` action. It asks for explicit
+  confirmation, calls standard ACP `session/delete`, keeps failures visible in
+  the modal, and removes the row only after Pi and TruACP metadata deletion both
+  succeed. The current session cannot be deleted until another session is
+  created or loaded.
+
+### Trustable Pi ACP extensions
+
+TruACP adds `_meta.trustable.piLaunch` version 1 to Pi `session/new` and
+`session/load`. It enables normal extension/skill discovery without allowing
+raw argv. The fork validates the version and converts only typed extension,
+skill, prompt-template, and session-directory fields into discrete arguments.
+Other ACP agents never receive this metadata.
+
+In a Trustable-managed launch, TruACP also supplies the installed
+`trustable-guardrails.ts` path through the typed extension list. The launcher,
+not the browser, owns that path via `TRUSTABLE_PI_EXTENSION`. Pi loads the
+extension before built-in tools execute; its `tool_call` hook blocks reads,
+writes, edits, shell environment dumps, and programmatic access to credential
+files or secret-bearing environment values. Template files such as
+`.env.example` remain readable. This is a narrow data-loss-prevention boundary,
+not a replacement for the removed OpenCode completion/recovery state machine.
+
+The fork reports `_meta.piAcp.activity` version 1 on `session_info_update`.
+`thinking`, `responding`, tool-specific states, `retrying`, `compacting`,
+`stopping`, and `idle` remain control-plane UI state; retry/compaction text must
+not be appended to the assistant transcript.
 
 ## 10d. Per-agent config & auth (gear panel)
 
@@ -563,10 +604,9 @@ launches.
 
 The `cwd` param is already threaded end-to-end (`routes.ts` `/api/session/{new,load,
 resume,fork,list}` all read `body.cwd ?? host.projectDir()`; `transport.ts` methods
-accept an optional `cwd`; `session-host.ts` `projectDir()` is the fallback). Today
-the browser UI never sends one, so every session uses the single launch-time
-`projectDir`. This section specifies making that mutable at runtime and surfacing it
-in the UI.
+accept an optional `cwd`; `session-host.ts` `projectDir()` is the fallback).
+Trustable's managed browser UI intentionally uses the single launch-time
+`projectDir`: the enclosing application already selects the workbench.
 
 ### Change directory — default project cwd
 
@@ -600,23 +640,14 @@ that today only reads config): `setProjectDir(dir)` updates the field consulted 
   `session/load`/`resume`/`fork` likewise take the cwd so a
   reopened session resolves against the same directory it was created in.
 
-### UI (§7 `ChangeDirectoryModal` + §10c connect flow)
+### Managed UI (§10c connect flow)
 
-§7 already lists a `ChangeDirectoryModal` React modal with, until now, no backing
-endpoint — `POST /api/directory` is that backing endpoint. Wiring:
-
-- A **directory control in the header** (near the agent pull-down / gear, §10c/§10d)
-  shows the current cwd (today rendered read-only as the `.cwd` span in
-  `ChatApp.tsx`) and opens `ChangeDirectoryModal` on click.
-- The modal collects an absolute (or server-relative) path, `POST`s it to
-  `/api/directory`, and on success updates the displayed cwd.
-- Because a directory change implies a fresh session, confirming the modal **starts a
-  new session** in the new directory: it calls `newSession` with the chosen `cwd`
-  (and re-runs `initialize` with that cwd if the agent isn't connected yet), clearing
-  the prior turns/session/permission exactly like the agent-switch teardown in §10c.
-- A **"New chat"** action in the header creates a new session in the *current* cwd
-  (calls `newSession(cwd)` with the header's directory), so directory selection and
-  new-session creation compose: pick a directory → new session there.
+- The Trustable-managed header does not display the absolute cwd. It is an
+  internal server path, consumes scarce horizontal space, and cannot be changed
+  meaningfully without leaving the workbench selected by the enclosing app.
+- A prominent, non-wrapping **"New session"** action creates a new session in the
+  launch-time workbench cwd. The server still retains its cwd-aware ACP APIs for
+  standalone clients and session restoration.
 
 ### Verification
 
@@ -626,9 +657,11 @@ endpoint — `POST /api/directory` is that backing endpoint. Wiring:
 - `POST /api/session/new {agentId: "pi", cwd: "<path-B>"}` → session created in
   `<path-B>` regardless of the default; a prompt that lists files reflects `<path-B>`.
 - `POST /api/directory {dir: "/does/not/exist"}` → 400, default cwd unchanged.
-- In the browser: change the directory via the header modal, send a prompt, confirm
-  the agent operates in the new directory; start a "New chat" and confirm a fresh
-  session in the same directory.
+- In the managed browser, the absolute cwd is absent from the header; start a
+  "New session" and confirm a fresh session in the same workbench.
+- Delete an inactive session from the list, confirm it disappears after
+  confirmation and does not return after reopening the modal. Verify the active
+  session delete control is disabled.
 
 New REST endpoints: `GET /api/directory`, `POST /api/directory`.
 

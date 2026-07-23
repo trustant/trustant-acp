@@ -33,7 +33,10 @@
 }
 body {
 	margin: 0;
-	font: 14px/1.55 system-ui, -apple-system, sans-serif;
+	font:
+		14px/1.55 system-ui,
+		-apple-system,
+		sans-serif;
 	color: var(--text);
 	background: var(--bg);
 }
@@ -71,6 +74,11 @@ body {
 	color: var(--accent-text);
 	border-color: transparent;
 }
+.topbar button.header-action {
+	background: var(--bg);
+	color: var(--text);
+	border-color: var(--border);
+}
 .topbar button:disabled {
 	opacity: 0.5;
 	cursor: default;
@@ -79,14 +87,12 @@ body {
 	color: var(--accent);
 	font-weight: 500;
 }
-.topbar .cwd {
-	margin-left: auto;
-	font-family: var(--mono);
-	font-size: 0.75rem;
-	color: var(--muted);
-	max-width: 40%;
-	overflow: hidden;
-	text-overflow: ellipsis;
+.topbar button.new-session-action {
+	/* WHY: session creation is a primary navigation action. Keep its complete
+	   label readable instead of allowing a narrow embedded pane to wrap it. */
+	min-width: 7.5rem;
+	padding-inline: 0.9rem;
+	font-weight: 600;
 	white-space: nowrap;
 }
 
@@ -256,6 +262,157 @@ body {
 	cursor: pointer;
 }
 .composer button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+.composer button.stop {
+	background: #dc2626;
+	min-width: 6.5rem;
+}
+
+/* Live agent activity. This is deliberately outside the message list so
+   protocol/control-plane state never becomes assistant-authored transcript. */
+.activity {
+	display: flex;
+	align-items: center;
+	gap: 0.55rem;
+	min-height: 2.1rem;
+	padding: 0.35rem 0.95rem;
+	border-top: 1px solid var(--border);
+	color: var(--muted);
+	background: var(--bg);
+	font-size: 0.85rem;
+}
+.activity-spinner {
+	width: 0.8rem;
+	height: 0.8rem;
+	border: 2px solid var(--border);
+	border-top-color: var(--accent);
+	border-radius: 50%;
+	animation: activity-spin 0.8s linear infinite;
+}
+.activity-elapsed {
+	margin-left: auto;
+	font-family: var(--mono);
+}
+@keyframes activity-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.history-modal {
+	max-height: min(80vh, 42rem);
+}
+.session-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.45rem;
+	max-height: 26rem;
+	overflow-y: auto;
+}
+.session-row {
+	display: flex;
+	align-items: stretch;
+	width: 100%;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--bg);
+	color: var(--text);
+	overflow: hidden;
+}
+.session-row:hover {
+	border-color: var(--accent);
+}
+.session-resume {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 0.2rem;
+	min-width: 0;
+	padding: 0.65rem 0.75rem;
+	border: 0;
+	background: transparent;
+	color: var(--text);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+.session-resume span {
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.session-resume small {
+	color: var(--muted);
+	font-family: var(--mono);
+}
+.session-delete {
+	/* WHY: deletion must be visually separate from the large resume target so
+	   clicking × can never accidentally load the session first. */
+	align-self: center;
+	margin-right: 0.55rem;
+	width: 2rem;
+	height: 2rem;
+	border: 1px solid transparent;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--muted);
+	font:
+		1.25rem/1 system-ui,
+		sans-serif;
+	cursor: pointer;
+}
+.session-delete:hover:not(:disabled) {
+	border-color: var(--error-text);
+	color: var(--error-text);
+	background: var(--error-bg);
+}
+.session-delete:disabled,
+.session-resume:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+.session-error {
+	margin-bottom: 0.75rem;
+	padding: 0.55rem 0.65rem;
+	border-radius: 8px;
+	background: var(--error-bg);
+	color: var(--error-text);
+	font-size: 0.85rem;
+}
+.session-delete-confirm {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.8rem;
+	margin-top: 0.75rem;
+	padding: 0.65rem 0.75rem;
+	border: 1px solid var(--error-text);
+	border-radius: 8px;
+	background: var(--error-bg);
+	color: var(--error-text);
+}
+.session-delete-confirm > div {
+	display: flex;
+	gap: 0.45rem;
+}
+.session-delete-confirm button {
+	padding: 0.35rem 0.65rem;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--bg);
+	color: var(--text);
+	font: inherit;
+	cursor: pointer;
+}
+.session-delete-confirm button.danger {
+	border-color: transparent;
+	background: #dc2626;
+	color: #fff;
+}
+.session-delete-confirm button:disabled {
 	opacity: 0.5;
 	cursor: default;
 }

@@ -15,7 +15,8 @@
 #
 # SELF-CONTAINED: this script needs no other file from the repo. Given just
 #
-#     setup.sh + pi.version + dist-bin/truacp.cjs
+#     setup.sh + pi.version + dist-bin/truacp.cjs + pi-acp-package.tgz
+#     + trustable-guardrails.ts
 #
 # it installs a complete, working truacp into ~/.local/bin — no package.json, no
 # node_modules, no secondary installer, no network beyond npm for the agents.
@@ -152,37 +153,55 @@ echo
 # shellcheck disable=SC2086 # Both variables are deliberately word-split specs.
 npm install -g --force $PREFIX_ARGS $GLOBAL_PACKAGES
 
-# pi-acp 0.0.31 performs its own `npm view` update lookup and does not honor
-# Pi's PI_SKIP_VERSION_CHECK/PI_OFFLINE contract. Trustable pins and upgrades
-# this dependency through pi.version, so patch the installed adapter to avoid an
-# unsolicited network request and duplicate banner in managed sessions. The
-# structural check deliberately fails setup when a future adapter changes this
-# code, preventing a silent or partial compatibility patch.
+# Install the exact nested Trustable fork instead of resolving upstream
+# pi-acp from npm. In source/VM mode setup builds a package from the checked-out
+# submodule; image packaging supplies the same tarball next to setup.sh.
+#
+# WHY: Stop, activity, extension commands and launch negotiation are implemented
+# in this fork. Falling back to npm would silently restore upstream behavior and
+# make source, VM and image runs disagree.
+PI_ACP_SOURCE_DIR="$SCRIPT_DIR/pi-acp"
+PI_ACP_PREBUILT="$SCRIPT_DIR/pi-acp-package.tgz"
+PI_ACP_BUILD_DIR=""
+PI_ACP_PACKAGE=""
+
+if [ -f "$PI_ACP_SOURCE_DIR/package.json" ]; then
+	if [ ! -f "$PI_ACP_SOURCE_DIR/package-lock.json" ]; then
+		echo "✗ nested pi-acp fork is missing package-lock.json." >&2
+		exit 1
+	fi
+	PI_ACP_BUILD_DIR=$(mktemp -d)
+	echo "Building nested Trustable pi-acp fork…"
+	(
+		cd "$PI_ACP_SOURCE_DIR"
+		npm ci
+		npm run build
+		npm pack --pack-destination "$PI_ACP_BUILD_DIR"
+	)
+	set -- "$PI_ACP_BUILD_DIR"/pi-acp-*.tgz
+	if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+		echo "✗ nested pi-acp build did not produce exactly one package archive." >&2
+		exit 1
+	fi
+	PI_ACP_PACKAGE="$1"
+elif [ -f "$PI_ACP_PREBUILT" ]; then
+	PI_ACP_PACKAGE="$PI_ACP_PREBUILT"
+else
+	echo "✗ Trustable pi-acp fork is unavailable." >&2
+	echo "  Initialize recursively or provide $PI_ACP_PREBUILT." >&2
+	exit 1
+fi
+
+npm install -g --force $PREFIX_ARGS "$PI_ACP_PACKAGE"
+
 PI_ACP_ENTRYPOINT="$INSTALL_PREFIX/lib/node_modules/pi-acp/dist/index.js"
 if [ ! -f "$PI_ACP_ENTRYPOINT" ]; then
 	echo "✗ pi-acp was installed but $PI_ACP_ENTRYPOINT was not found." >&2
 	exit 1
 fi
-node - "$PI_ACP_ENTRYPOINT" <<'NODE'
-const fs = require("node:fs");
-
-const entrypoint = process.argv[2];
-const marker = "function buildUpdateNotice() {\n";
-const guard =
-	"  if (process.env.PI_SKIP_VERSION_CHECK || process.env.PI_OFFLINE) return null;\n";
-const source = fs.readFileSync(entrypoint, "utf8");
-
-if (!source.includes(marker + guard)) {
-	const occurrences = source.split(marker).length - 1;
-	if (occurrences !== 1) {
-		console.error(
-			`✗ cannot apply the pi-acp update-check compatibility patch: expected one ${marker.trim()} marker, found ${occurrences}.`,
-		);
-		process.exit(1);
-	}
-	fs.writeFileSync(entrypoint, source.replace(marker, marker + guard));
-}
-NODE
+if [ -n "$PI_ACP_BUILD_DIR" ]; then
+	rm -rf "$PI_ACP_BUILD_DIR"
+fi
 
 # Resolve the Pi binary from the prefix just populated instead of assuming the
 # caller has already refreshed PATH. This is required in fresh VM/image builds.
@@ -211,9 +230,10 @@ for pkg in $PI_EXTENSION_PACKAGES; do
 done
 
 echo
-# Every spec is pinned, so the manifest is the record of what was installed —
-# no need to ask the registry (`npm view` reports latest, not what landed).
-echo "✓ Provisioned $(printf '%s\n' "$PACKAGES" | grep -c '^') pinned packages."
+# Every spec is pinned, so the manifest is the record of what was installed;
+# querying the registry would report latest, not what actually landed.
+PACKAGE_COUNT=$(printf '%s\n' "$PACKAGES" | grep -c '^')
+echo "✓ Provisioned $((PACKAGE_COUNT + 1)) pinned packages (including the Trustable pi-acp fork)."
 
 # ---------------------------------------------------------------------------
 # Phase 2 — build (only with a package.json in the current directory)
@@ -242,12 +262,12 @@ fi
 # Phase 3 — install into ~/.local
 # ---------------------------------------------------------------------------
 #
-# Self-contained: this phase needs nothing but the bundle itself, so a machine
-# with only setup.sh, pi.version and dist-bin/truacp.cjs can install a complete,
-# working truacp. Installation deliberately lives only here so source, VM, and
-# image builds all generate the same launchers from the same implementation.
+# Self-contained: this phase consumes the five runtime artifacts named in the
+# header to install a complete, working truacp. Installation deliberately lives
+# only here so source, VM, and image builds all generate the same launchers from
+# the same implementation.
 #
-# The bundle is looked for next to the script first (the three-file layout), then
+# The bundle is looked for next to the script first (the five-file layout), then
 # in the current directory (running from a source checkout elsewhere).
 BUNDLE=""
 for candidate in \
@@ -267,22 +287,37 @@ if [ -z "$BUNDLE" ]; then
 	exit 0
 fi
 
+GUARDRAIL_SOURCE="$SCRIPT_DIR/extensions/trustable-guardrails.ts"
+if [ ! -f "$GUARDRAIL_SOURCE" ]; then
+	GUARDRAIL_SOURCE="$SCRIPT_DIR/trustable-guardrails.ts"
+fi
+if [ ! -f "$GUARDRAIL_SOURCE" ]; then
+	echo "✗ Trustable Pi guardrail extension is missing." >&2
+	exit 1
+fi
+
 LIB_DIR="$HOME/.local/lib/truacp"
 BIN_DIR="$HOME/.local/bin"
+EXTENSION_DIR="$LIB_DIR/extensions"
 
 echo
 echo "Installing truacp into $HOME/.local (from $BUNDLE) …"
-mkdir -p "$LIB_DIR" "$BIN_DIR"
+mkdir -p "$LIB_DIR" "$BIN_DIR" "$EXTENSION_DIR"
 cp "$BUNDLE" "$LIB_DIR/truacp.cjs"
+cp "$GUARDRAIL_SOURCE" "$EXTENSION_DIR/trustable-guardrails.ts"
 
 # The launcher is a portable shell script, not a compiled binary: `node` is
 # resolved from PATH at run time, so the same bytes work on any architecture.
 # Installed under both names — `truacp` is what Trustable launches.
+#
+# WHY: the extension path is owned by setup, not by a workbench or browser
+# request. AcpClient passes it through the typed Pi launch contract.
 for launcher in "$BIN_DIR/truacp" "$BIN_DIR/trustable-acp"; do
 	cat >"$launcher" <<EOF
 #!/bin/sh
 # trustable-acp launcher — generated by setup.sh. Runs the bundled ACP server
 # with whatever node is on PATH.
+export TRUSTABLE_PI_EXTENSION="$EXTENSION_DIR/trustable-guardrails.ts"
 exec node "$LIB_DIR/truacp.cjs" "\$@"
 EOF
 	chmod +x "$launcher"
@@ -290,5 +325,6 @@ done
 
 echo "✓ Installed:"
 echo "    $LIB_DIR/truacp.cjs"
+echo "    $EXTENSION_DIR/trustable-guardrails.ts"
 echo "    $BIN_DIR/truacp"
 echo "    $BIN_DIR/trustable-acp"

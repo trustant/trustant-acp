@@ -178,6 +178,13 @@ export class AcpTransport {
 		return result;
 	}
 
+	async deleteAgentSession(
+		agentId: string,
+		sessionId: string,
+	): Promise<void> {
+		await this.call("/api/session/delete", { agentId, sessionId });
+	}
+
 	async respondToPermission(
 		requestId: string,
 		optionId: string,
@@ -226,7 +233,11 @@ export class AcpTransport {
 	// ---- per-agent config + auth (endpoint/login popups) ------------------
 
 	/** Probe Pi endpoint/auth quickly through its configured /models catalog. */
-	async piHello(): Promise<{ ok: boolean; detail: string; managed: boolean }> {
+	async piHello(): Promise<{
+		ok: boolean;
+		detail: string;
+		managed: boolean;
+	}> {
 		return this.call("/api/pi/hello");
 	}
 
