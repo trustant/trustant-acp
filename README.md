@@ -8,9 +8,18 @@
 
 # Development
 
-First, run `./setup.sh` to ensure you have all the dependencies.
+`npm run dev` must run **inside the `trudev` Lima VM**, against an app checkout in
+the workbench. It checks both on startup and explains what to do if either is
+missing. From the `trustable-app` repo on the macOS host:
 
-Then start the development stack:
+```
+./start.sh     # provision/boot the Lima VM
+./ssh.sh       # shell into it
+```
+
+Then inside the VM, run `./setup.sh` once to install the dependencies.
+
+Start the development stack:
 
 ```
 npm run dev

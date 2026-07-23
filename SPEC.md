@@ -56,7 +56,7 @@ Two processes, one repo (monorepo or two build targets):
 
 - **Server owns all Node-only capabilities**: `child_process.spawn` (agents + terminals), `fs` (sessions, export, mentions), `config.json` I/O, env/secret resolution, WSL/Windows PATH logic (`platform.ts`, `paths.ts`).
 - **Browser owns rendering only**: React UI, markdown, styling. No `child_process`, no `fs`.
-- **Transport**: one **WebSocket** carries the streaming `session/update` events (the existing single `onSessionUpdate` channel serializes cleanly to WS messages) and permission/terminal requests; **REST** endpoints handle request/response calls (`initialize`, `newSession`, `sendPrompt`, `listSessions`, `loadSession`, `resumeSession`, `forkSession`, `setSessionConfigOption`, `cancel`, config get/save, session history get/delete, export).
+- **Transport**: one **WebSocket** carries the streaming `session/update` events (the existing single `onSessionUpdate` channel serializes cleanly to WS messages) and permission/terminal requests; **REST** endpoints handle request/response calls (`initialize`, `newSession`, `sendPrompt`, `listSessions`, `loadSession`, `resumeSession`, `forkSession`, agent-owned `deleteSession`, `setSessionConfigOption`, `cancel`, config get/save, local session history get/delete, export).
 - **Client-side transport shim** implements the same surface the UI expects today (an `AcpClient`-shaped facade) so `hooks/*` and `ChatPanel` change minimally — they call methods that now issue REST/WS instead of touching an in-process `AcpClient`.
 
 ### 3.1 Directory layout (proposed)
@@ -146,6 +146,8 @@ Single JSON file, loaded at server start, hot-reloadable via the settings API. S
 
 **REST** (request/response), one handler per current `AcpClient` method:
 - `POST /session/initialize`, `/session/new`, `/session/load`, `/session/resume`, `/session/fork`, `/session/list` — each accepts an optional `cwd` (see §10e); `/session/new` creates the session in `cwd ?? projectDir`.
+- `POST /session/delete` calls standard ACP `session/delete` and clears the
+  TruACP metadata only after the owning agent confirms deletion.
 - `POST /session/:id/prompt`, `/session/:id/cancel`, `/session/:id/config-option`, `/session/:id/mode`
 - `GET /api/directory` (current default cwd), `POST /api/directory` (change default cwd) — see §10e.
 - `POST /permission/:id` (approve/reject)
@@ -175,8 +177,9 @@ Single JSON file, loaded at server start, hot-reloadable via the settings API. S
 
 - **Builds**: `web` (browser bundle + `index.html`, embedded into the server) via
   `esbuild.web.mjs`, and `server` (single self-contained `.cjs`) via
-  `esbuild.server.mjs`. `npm run build` chains both then installs a `truacp` launcher
-  (see §10a "Single-binary build + install").
+  `esbuild.server.mjs`. `npm run build` chains both and produces
+  `dist-bin/truacp.cjs`; installation is owned exclusively by `setup.sh`
+  (see §10a "Single-bundle build").
 - Deps: `react-markdown`, `remark-gfm`, `remark-math`, `rehype-katex`, `lucide-react`, a WS lib (`ws`), `dotenv`, an http framework (or Node `http`).
 - Core deps: `@agentclientprotocol/sdk`, `react`/`react-dom`, `@tanstack/react-virtual`, `diff`, `zod`, `semver`.
 - `npm run serve` runs the server directly via `tsx`; the installed `truacp` binary
@@ -250,8 +253,19 @@ sides against a target app checkout:
   backend and drop in-flight agent sessions.
 - **Target** — `ACP_DIR` (default `$WORKBENCH_DIR/trureact`, with `WORKBENCH_DIR`
   defaulting to `$HOME/workbench`) and `ACP_PORT` (default 4096) are overridable:
-  `ACP_DIR=/path/to/app ACP_PORT=4097 ./run.sh`. A missing target dir aborts with a
-  message rather than starting a half-configured server.
+  `ACP_DIR=/path/to/app ACP_PORT=4097 ./run.sh`.
+- **Preflight** — before starting anything, `run.sh` aborts (exit 1) with an
+  explanation of the prerequisite when either condition fails:
+  1. **No `lima0` interface** — `run.sh` is the *in-VM* entry point, and the URL it
+     advertises is the `lima0` host↔VM address, which exists only in the guest.
+     Running it on the macOS host would serve an unreachable URL. The message points
+     at `./start.sh` → `./ssh.sh` → `./setup.sh`, and notes that `npm run serve` is
+     the VM-agnostic alternative. Note this is stricter than the server binary
+     itself: `advertisedIp()` (§10a) *falls back* when `lima0` is absent, so bare
+     Linux server builds keep working — only the dev script hard-fails.
+  2. **No app checkout at `ACP_DIR`** — the workbench checkout is created by
+     launching the app from the Trustable UI. The message lists what *is* present in
+     `$WORKBENCH_DIR` so the right `ACP_DIR` is obvious.
 - **Env** — `ACP_ENV` (default `$WORKBENCH_DIR/.env`) is passed through as an absolute
   `--env`, so it is loaded before the chdir and is independent of `ACP_DIR` (§5). The
   target checkout's own `.env` is never read. A missing file only warns, since keys
@@ -280,32 +294,59 @@ running. Polling means either watcher exiting takes the whole script down.
 
 **Build the web UI + regenerate the embed module:** `npm run build:web`
 (`node esbuild.web.mjs production`). This builds `dist-web/` **and** rewrites
-`server/web-bundle.generated.ts`; `npm run dev:web` does the same on watch. Because
-esbuild's binaries are platform-specific, run it where they match (in this project's
-setup, inside the `trudev` VM).
+`server/web-bundle.generated.ts`; `npm run dev:web` does the same on watch.
+esbuild's executable must match the build host: development setup builds inside
+`trudev`, while `image.sh` installs dependencies and builds on its own host before
+staging the portable JavaScript bundle.
 
-**Single-binary build + install:** `npm run build` produces one self-contained
-artifact and installs a launcher on PATH:
+**Single-bundle build:** `npm run build` produces one self-contained artifact:
 
 1. `build:web` — builds the web UI and refreshes the embed module (above).
 2. `build:server` (`node esbuild.server.mjs`) — bundles `server/index.ts` into
    `dist-bin/truacp.cjs`: everything (ws, ACP SDK, the embedded web UI) inlined,
    only Node builtins external, minified, with a `#!/usr/bin/env node` shebang.
-3. `install-bin.sh` — copies the bundle to `~/.local/lib/truacp/truacp.cjs` and
-   writes a launcher `~/.local/bin/truacp` (`exec node <bundle> "$@"`) that forwards
-   all flags (`--port`, `--dir`, `--config`, …). It warns if `~/.local/bin` is not on
-   PATH.
+The build does not install anything into the caller's home directory. Run
+`setup.sh` to install the bundle and generate the `truacp` and `trustable-acp`
+launchers. Keeping that side effect out of `npm run build` lets `image.sh` build
+and stage the artifact without modifying the build host. Because the web UI is
+embedded, the single `.cjs` needs no `dist-web/` or `node_modules` at runtime —
+just a Node runtime.
 
-The result is invoked as `truacp [--port <n>] [--dir <path>] …`. Because the web UI
-is embedded, the single `.cjs` needs no `dist-web/` or `node_modules` at runtime —
-just a Node runtime. esbuild is platform-specific, so run the build in the `trudev`
-VM.
+**The launchers generated by `setup.sh` are portable shell scripts, not compiled
+binaries.** `node` is assumed to be on PATH and is resolved at run time, so a
+launcher is architecture-independent: the same bytes work on any platform with
+a Node runtime. The build output contains only `dist-bin/truacp.cjs`; launcher
+generation is an installation concern.
 
-## 10b. Agent installation (`setup.sh`)
+## 10b. Setup (`setup.sh`)
 
-`./setup.sh` (or `npm run setup:agents`) installs the **CLI + ACP adapter** for
-each of the three supported agents — Claude Code, Codex, and Pi — globally via
-npm. Each adapter drives an underlying CLI that must be on PATH.
+`./setup.sh` (or `npm run setup:agents`) is the one-shot bootstrap. It runs three
+ordered phases:
+
+1. **Install components** — the supported CLIs and upstream ACP adapters
+   globally via npm, register Pi extensions through `pi install`, and build or
+   install the pinned nested Trustable `pi-acp` fork. npm package pins live in
+   `pi.version`; the fork revision is pinned by the nested Git submodule.
+2. **Build** — *only if a `package.json` exists in the current directory*:
+   `dist-web/` (web UI) and `dist-bin/truacp.cjs` (server bundle).
+3. **Install** — the bundle into `~/.local/lib/truacp` plus the launcher scripts
+   into `~/.local/bin`, whenever a bundle is present (freshly built or prebuilt).
+
+The script is portable **POSIX `sh`** — no bashisms, no arrays — so a Dockerfile
+can `COPY` it and `RUN` it under the default `/bin/sh`. `set -eu` is in effect,
+so any failing step aborts it.
+
+**Self-contained.** `setup.sh` depends on no other file in the repo. Given only
+
+```
+setup.sh + pi.version + dist-bin/truacp.cjs + pi-acp-package.tgz
+```
+
+it installs a complete, working truacp into `~/.local/bin` — no `package.json`,
+no `node_modules`, no secondary installer, and no network beyond npm for the
+remaining agents. Source mode builds the nested fork; image mode supplies the
+tarball produced from that same source revision. Phase 3 is the only launcher
+implementation, so source, VM, and image runtimes cannot drift.
 
 ### Preflight
 
@@ -313,19 +354,17 @@ The script runs a preflight before installing anything and **aborts with a
 non-zero status** on the first failed check, so a wrong environment fails loudly
 instead of half-installing:
 
-1. **Linux only** — `uname -s` must be `Linux`. Any other platform (macOS,
-   Windows) aborts with a message pointing at the `trudev` VM, which is where
-   the supported environment lives. The script does not attempt a
-   platform-specific fallback.
-2. **Node.js already installed and on PATH** — `node` must resolve via
+1. **Node.js already installed and on PATH** — `node` must resolve via
    `command -v`. The script is an agent installer, **not** a Node installer: it
    never downloads, upgrades, or version-manages a runtime. A missing `node`
    aborts with an instruction to install it first.
-3. **npm on PATH** — `npm` must likewise resolve; it is the mechanism every
+2. **npm on PATH** — `npm` must likewise resolve; it is the mechanism every
    install below uses.
 
 On success the preflight prints the resolved `node -v` / `npm -v` so the
-versions in play are visible in the log.
+versions in play are visible in the log. There is deliberately **no OS gate**:
+the script must run in a Docker build layer as well as in the `trudev` VM, and
+the two checks above are the only environmental requirements it actually has.
 
 The agents and their adapters:
 
@@ -338,9 +377,10 @@ The agents and their adapters:
 - The adapters are what `config.json` spawns via `npx -y <adapter>`; a global install
   makes launches instant/offline. The CLIs are the binaries the adapters exec.
   `pi-acp` is **not** self-contained — it requires the `pi` binary on PATH.
-- **Pi extensions.** Two further packages are installed alongside Pi and extend the
-  `pi` CLI itself (they are not ACP adapters and are never spawned directly by
-  `config.json`):
+- **Pi extensions.** Two further packages extend the `pi` CLI itself (they are
+  not ACP adapters and are never spawned directly by `config.json`). They must
+  be registered through `pi install`; a global npm install alone leaves them
+  unavailable to Pi:
   - `pi-mcp-adapter` — MCP (Model Context Protocol) support for Pi, letting it
     consume MCP servers as tool sources.
   - `pi-web-access` — web search, URL fetching, GitHub repo cloning, and
@@ -353,10 +393,70 @@ The agents and their adapters:
 - The script installs into npm's global prefix when writable, else falls back to a
   user prefix at `~/.local` (bin → `~/.local/bin`, conventionally on PATH), so no
   sudo is needed. `--force` keeps re-runs idempotent (overwrites stale bin links).
+- `pi-acp` comes from the nested Trustable fork, based on upstream v0.0.31. The
+  fork natively honors `PI_SKIP_VERSION_CHECK` and `PI_OFFLINE`, exposes
+  versioned launch/activity metadata, includes extension commands, and bounds
+  abort requests. `setup.sh` never falls back to the public npm adapter because
+  that would silently remove those capabilities.
 - API keys are not handled here — set them in `.env` (`ANTHROPIC_API_KEY`,
   `OPENAI_API_KEY`, `PI_API_KEY`; see `.env.example`).
 - After running it, **restart the server** so the newly-installed binaries are on
   the server process's inherited PATH.
+
+### The version manifest (`pi.version`)
+
+`pi.version`, next to `setup.sh`, is the source of truth for npm-installed
+packages and versions. The `pi-acp` adapter is the explicit exception: its
+source revision is the nested `pi-acp` submodule and its package version is
+recorded in that repository. This separation makes Trustable adapter changes
+reviewable without publishing a replacement npm package.
+
+Each line is a **literal npm install spec**, `<module>@<version>`. `#` comments
+and blank lines are ignored:
+
+```
+@anthropic-ai/claude-code@2.1.216
+@agentclientprotocol/claude-agent-acp@0.60.0
+@openai/codex@0.144.6
+@agentclientprotocol/codex-acp@1.1.4
+@earendil-works/pi-coding-agent@0.80.10
+pi-mcp-adapter@2.11.0
+pi-web-access@0.13.0
+```
+
+**Every entry must be pinned.** An unpinned spec would silently resolve to latest
+and defeat build reproducibility, so `setup.sh` rejects it and exits non-zero
+instead of falling back. Detection strips the leading `@` of a scoped name before
+looking for a version separator, so `@scope/name` is correctly read as unpinned
+while `@scope/name@1.2.3` is pinned. A missing, empty, or comment-only manifest
+is likewise a hard error.
+
+The file is read relative to the *script's* directory, not the current directory,
+so the pins apply in runtime-only mode too.
+
+### Build and install phases
+
+The two phases are gated **independently** — that is what makes the five-file
+deployment above work:
+
+| Working directory holds | Phase 2 (build) | Phase 3 (install) |
+|---|---|---|
+| `package.json` + sources | builds the bundle | installs what it built |
+| a prebuilt `truacp.cjs` only | skipped | installs the prebuilt bundle |
+| neither | skipped | skipped — agents only, exit **0** |
+
+The build gate tests the **current** directory, so `cd trustable-acp &&
+./setup.sh` builds while `./trustable-acp/setup.sh` from the parent does not. The
+bundle lookup is the reverse: it prefers the **script's** directory
+(`<script dir>/dist-bin/truacp.cjs`, then `<script dir>/truacp.cjs`) before the
+current one, so a copied-out five-file set installs correctly regardless of the
+invoking cwd. A missing bundle is not an error — it is the runtime-only mode.
+
+With a `package.json` present, phase 2 runs `npm ci` (falling back to `npm
+install`), then `npm run build:web` and `npm run build:server`. Because esbuild's
+binaries are platform-specific, the build phase must run where they match — in
+this project's setup, the `trudev` VM or the image build. Phase 3 has no such
+constraint: it only copies a file and writes shell scripts.
 
 ## 10c. Web UI agent selection (`web/ChatApp.tsx`)
 
@@ -374,34 +474,71 @@ The chat UI connects to a default agent and lets the user switch:
   (`initialize` + `newSession`) — there is no separate Connect button. During the
   attempt the header shows "Connecting…"; on success it shows "● \<agent name\>" and
   the chat becomes writable.
-- The pull-down **stays active** (disabled only while connecting), so the agent can
-  be **switched at any time**. Switching clears the prior turns/session/permission
-  and reconnects to the new agent.
+- Agent, model, and configuration controls are disabled while a turn is active,
+  because switching transports would make Stop target the wrong ACP session.
+  Once idle, switching clears the prior turns/session/permission and reconnects.
+- While Pi is active, the composer becomes a red **Stop** action. The adapter
+  publishes `piAcp.activity` metadata and the UI shows its label plus elapsed
+  time. This is activity, not a fabricated percentage: Pi does not expose a
+  reliable total-work denominator.
+- **New session** is the prominent, non-wrapping header action that creates a
+  fresh session in the current cwd. **Sessions** lists resumable Pi sessions and
+  loads the selected one through ACP `session/load`. The managed header does not
+  render the launch-time cwd: an app is already scoped to its workbench and the
+  absolute server path provides no useful user action.
+- Each non-active session row has a separate `×` action. It asks for explicit
+  confirmation, calls standard ACP `session/delete`, keeps failures visible in
+  the modal, and removes the row only after Pi and TruACP metadata deletion both
+  succeed. The current session cannot be deleted until another session is
+  created or loaded.
+
+### Trustable Pi ACP extensions
+
+TruACP adds `_meta.trustable.piLaunch` version 1 to Pi `session/new` and
+`session/load`. It enables normal extension/skill discovery without allowing
+raw argv. The fork validates the version and converts only typed extension,
+skill, prompt-template, and session-directory fields into discrete arguments.
+Other ACP agents never receive this metadata.
+
+The typed contract is the transport for extensions selected by a trusted
+server-side configuration. Issue #58 does not install a Trustable execution
+policy or credential guardrail: that policy, its ownership, and its acceptance
+tests belong to issue #57. Browser requests cannot inject extension paths.
+
+The fork reports `_meta.piAcp.activity` version 1 on `session_info_update`.
+`thinking`, `responding`, tool-specific states, `retrying`, `compacting`,
+`stopping`, and `idle` remain control-plane UI state; retry/compaction text must
+not be appended to the assistant transcript.
 
 ## 10d. Per-agent config & auth (gear panel)
 
 Each agent is configured/authenticated through its **own native mechanism** (its
 login CLI or config file) — there is no side-store; the server just drives those.
-Configuration is surfaced **automatically on agent select** (pi probes
-with a hello and pops a form on failure; codex/claude check login and pop the auth
-flow) and can be re-triggered anytime via a **⚙️ gear** in the header: for
-pi it reopens the endpoint form (base URL + API key), for codex/claude it
-restarts the login flow (renew login). The gear reconfigures without forcing a
-reconnect; the new settings apply on the next connect.
+Configuration is surfaced **automatically on agent select** (standalone pi
+probes `/models` and pops a form on failure; codex/claude check login and pop the
+auth flow) and can be re-triggered anytime via a **⚙️ gear** in the header. In a
+Trustable-managed runtime (`TRUSTABLE_MANAGED_RUNTIME=1`), Pi configuration is
+owned by Trustable: failures and the gear direct the user to Trustable's main
+Configure screen instead of opening the standalone credential form.
 
 **Pi — try-then-ask, written to pi's native config.** Pi has no headless auth
 CLI, and it does *not* honor `OPENAI_BASE_URL` (verified: it always hits
 platform.openai.com). A custom OpenAI-compatible endpoint is configured through
-pi's own `~/.pi/agent/models.json` — a custom provider (`trustable`) with
-`baseUrl` + `api: "openai-completions"` + `apiKey` + a model id (per pi's
-models.md). pi-acp then discovers it via `get_available_models`.
+pi's native `~/.pi/agent/models.json` and `auth.json`: the custom provider
+(`local`) keeps endpoint/models plus a `$OPENAI_API_KEY` reference in models.json,
+while the real credential lives only in auth.json. In managed mode, TruACP reads
+the active `local`, `ollama`, or `trustable` provider from
+`settings.json.defaultProvider`; pi-acp then discovers the same native
+configuration.
 The UI flow is **"try, then ask"**: on selecting pi, the server probes the
 configured endpoint with `GET <baseUrl>/models` (`POST /api/pi/hello`) — a fast
 reachability + auth check that avoids the multi-second hang a real completion can
 cause on cold/large models (e.g. Ollama). If it lists models, the session starts.
-If not, a popup collects **only Base URL + API key**; `POST /api/pi/config/set`
-fetches `/models`, picks the first model, writes the provider into models.json,
-and the probe is retried before connecting. (`server/pi-config.ts`.)
+If not, standalone mode opens a popup collecting **only Base URL + API key**;
+`POST /api/pi/config/set` fetches `/models`, writes endpoint/models to
+models.json and the key to auth.json, then retries the probe. The config GET API
+never returns the stored key. Managed mode shows the Trustable Configure message
+instead. (`server/pi-config.ts`.)
 
 **Codex — ChatGPT device-code login.** Codex authenticates out-of-band via the
 `codex` CLI (not via ACP). On selecting codex, the UI calls
@@ -435,6 +572,14 @@ and refreshed on `config_option_update`. Changing it calls
 works for any agent that exposes model options (claude: Opus/Sonnet/Haiku; others
 after their endpoint/login is configured).
 
+For Pi, Trustable owns the provider boundary. The active provider is `trustable`
+for the Trustable status catalog, `ollama` for embedded/status-backed Ollama,
+or `local` for provided/custom endpoints. Pi settings contain only
+`enabledModels: ["<active-provider>/*"]`, and the TruACP header retains only
+option values with that same active prefix. Both controls are required because
+pi-acp currently publishes Pi's full built-in provider catalog in
+`configOptions` even when model cycling is scoped by `enabledModels`.
+
 New REST endpoints: `POST /api/pi/hello`, `/api/pi/config/{get,set}`,
 `/api/codex/login-status`, `/api/codex/login-device`,
 `/api/claude/login-status`, `/api/claude/login-start`, `/api/claude/login-complete`.
@@ -452,10 +597,9 @@ launches.
 
 The `cwd` param is already threaded end-to-end (`routes.ts` `/api/session/{new,load,
 resume,fork,list}` all read `body.cwd ?? host.projectDir()`; `transport.ts` methods
-accept an optional `cwd`; `session-host.ts` `projectDir()` is the fallback). Today
-the browser UI never sends one, so every session uses the single launch-time
-`projectDir`. This section specifies making that mutable at runtime and surfacing it
-in the UI.
+accept an optional `cwd`; `session-host.ts` `projectDir()` is the fallback).
+Trustable's managed browser UI intentionally uses the single launch-time
+`projectDir`: the enclosing application already selects the workbench.
 
 ### Change directory — default project cwd
 
@@ -489,23 +633,14 @@ that today only reads config): `setProjectDir(dir)` updates the field consulted 
   `session/load`/`resume`/`fork` likewise take the cwd so a
   reopened session resolves against the same directory it was created in.
 
-### UI (§7 `ChangeDirectoryModal` + §10c connect flow)
+### Managed UI (§10c connect flow)
 
-§7 already lists a `ChangeDirectoryModal` React modal with, until now, no backing
-endpoint — `POST /api/directory` is that backing endpoint. Wiring:
-
-- A **directory control in the header** (near the agent pull-down / gear, §10c/§10d)
-  shows the current cwd (today rendered read-only as the `.cwd` span in
-  `ChatApp.tsx`) and opens `ChangeDirectoryModal` on click.
-- The modal collects an absolute (or server-relative) path, `POST`s it to
-  `/api/directory`, and on success updates the displayed cwd.
-- Because a directory change implies a fresh session, confirming the modal **starts a
-  new session** in the new directory: it calls `newSession` with the chosen `cwd`
-  (and re-runs `initialize` with that cwd if the agent isn't connected yet), clearing
-  the prior turns/session/permission exactly like the agent-switch teardown in §10c.
-- A **"New chat"** action in the header creates a new session in the *current* cwd
-  (calls `newSession(cwd)` with the header's directory), so directory selection and
-  new-session creation compose: pick a directory → new session there.
+- The Trustable-managed header does not display the absolute cwd. It is an
+  internal server path, consumes scarce horizontal space, and cannot be changed
+  meaningfully without leaving the workbench selected by the enclosing app.
+- A prominent, non-wrapping **"New session"** action creates a new session in the
+  launch-time workbench cwd. The server still retains its cwd-aware ACP APIs for
+  standalone clients and session restoration.
 
 ### Verification
 
@@ -515,9 +650,11 @@ endpoint — `POST /api/directory` is that backing endpoint. Wiring:
 - `POST /api/session/new {agentId: "pi", cwd: "<path-B>"}` → session created in
   `<path-B>` regardless of the default; a prompt that lists files reflects `<path-B>`.
 - `POST /api/directory {dir: "/does/not/exist"}` → 400, default cwd unchanged.
-- In the browser: change the directory via the header modal, send a prompt, confirm
-  the agent operates in the new directory; start a "New chat" and confirm a fresh
-  session in the same directory.
+- In the managed browser, the absolute cwd is absent from the header; start a
+  "New session" and confirm a fresh session in the same workbench.
+- Delete an inactive session from the list, confirm it disappears after
+  confirmation and does not return after reopening the modal. Verify the active
+  session delete control is disabled.
 
 New REST endpoints: `GET /api/directory`, `POST /api/directory`.
 
@@ -525,5 +662,3 @@ New REST endpoints: `GET /api/directory`, `POST /api/directory`.
 
 - **Phase 1**: from a terminal, server spawns `claude` in a chosen cwd, completes `initialize`→`newSession`→`sendPrompt`, and streams `agent_message_chunk`s to stdout. Repeat for `codex` and `pi`.
 - **End-to-end**: open `localhost:PORT`, start a chat, send a prompt, see streamed response + a tool call with diff, approve a permission, fork/resume a session, export to markdown. `config.json` alone (plus `.env`) fully configures agents, cwd, and display.
-
-

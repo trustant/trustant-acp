@@ -18,13 +18,6 @@ import {
 	type PiHelloResult,
 } from "./pi-config";
 import {
-	readOpencodeConfig,
-	writeOpencodeProvider,
-	opencodeHello,
-	type OpencodeConfig,
-	type OpencodeHelloResult,
-} from "./opencode-config";
-import {
 	codexLoginStatus,
 	codexStartDeviceAuth,
 	type CodexLoginStatus,
@@ -52,6 +45,7 @@ import type {
 	ConfigOptionRequest,
 	ConfigOptionResponse,
 	ListSessionsResponse,
+	DeleteAgentSessionRequest,
 	PermissionResponse,
 	SavedSessionsResponse,
 	SavedMessagesResponse,
@@ -193,6 +187,18 @@ export const routes = {
 		return { result: await client.listSessions(body.cwd, body.cursor) };
 	},
 
+	"POST /api/session/delete": async (
+		ctx: RouteContext,
+		body: DeleteAgentSessionRequest,
+	): Promise<{ ok: true }> => {
+		const client = ctx.host.requireClient(body.agentId);
+		// WHY: Pi owns the canonical session file. Remove it through ACP first;
+		// only then clear TruACP's secondary metadata to avoid a ghost Pi entry.
+		await client.deleteSession(body.sessionId);
+		await ctx.store.deleteSession(body.sessionId);
+		return { ok: true };
+	},
+
 	"POST /api/permission/respond": async (
 		ctx: RouteContext,
 		body: PermissionResponse,
@@ -236,6 +242,9 @@ export const routes = {
 	},
 
 	// ---- pi provider config (native ~/.pi/agent/models.json) --------------
+	// OpenCode endpoint routes are intentionally absent: Pi is the managed
+	// coding runtime, so retaining the old routes would expose dead UI paths and
+	// imply that an OpenCode executable is still installed.
 
 	"POST /api/pi/hello": async (): Promise<PiHelloResult> => piHello(),
 
@@ -250,29 +259,6 @@ export const routes = {
 		body: PiConfig,
 	): Promise<{ ok: true }> => {
 		await writePiProvider({
-			baseUrl: body.baseUrl ?? "",
-			apiKey: body.apiKey ?? "",
-			model: body.model ?? "",
-		});
-		return { ok: true };
-	},
-
-	// ---- opencode provider config (native opencode.jsonc) -----------------
-
-	"POST /api/opencode/hello": async (): Promise<OpencodeHelloResult> =>
-		opencodeHello(),
-
-	"POST /api/opencode/config/get": async (): Promise<{
-		config: Partial<OpencodeConfig>;
-	}> => ({
-		config: await readOpencodeConfig(),
-	}),
-
-	"POST /api/opencode/config/set": async (
-		_ctx: RouteContext,
-		body: OpencodeConfig,
-	): Promise<{ ok: true }> => {
-		await writeOpencodeProvider({
 			baseUrl: body.baseUrl ?? "",
 			apiKey: body.apiKey ?? "",
 			model: body.model ?? "",

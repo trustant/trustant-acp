@@ -178,6 +178,13 @@ export class AcpTransport {
 		return result;
 	}
 
+	async deleteAgentSession(
+		agentId: string,
+		sessionId: string,
+	): Promise<void> {
+		await this.call("/api/session/delete", { agentId, sessionId });
+	}
+
 	async respondToPermission(
 		requestId: string,
 		optionId: string,
@@ -225,8 +232,12 @@ export class AcpTransport {
 
 	// ---- per-agent config + auth (endpoint/login popups) ------------------
 
-	/** Probe pi connectivity with a one-shot hello prompt. */
-	async piHello(): Promise<{ ok: boolean; detail: string }> {
+	/** Probe Pi endpoint/auth quickly through its configured /models catalog. */
+	async piHello(): Promise<{
+		ok: boolean;
+		detail: string;
+		managed: boolean;
+	}> {
 		return this.call("/api/pi/hello");
 	}
 
@@ -249,32 +260,6 @@ export class AcpTransport {
 		model?: string;
 	}): Promise<void> {
 		await this.call("/api/pi/config/set", cfg);
-	}
-
-	/** Probe OpenCode connectivity with a one-shot hello run. */
-	async opencodeHello(): Promise<{ ok: boolean; detail: string }> {
-		return this.call("/api/opencode/hello");
-	}
-
-	/** Read OpenCode's custom provider config from opencode.jsonc. */
-	async opencodeConfigGet(): Promise<{
-		baseUrl?: string;
-		apiKey?: string;
-		model?: string;
-	}> {
-		const { config } = await this.call<{
-			config: { baseUrl?: string; apiKey?: string; model?: string };
-		}>("/api/opencode/config/get");
-		return config;
-	}
-
-	/** Write OpenCode's custom provider (base URL + API key; model auto-discovered). */
-	async opencodeConfigSet(cfg: {
-		baseUrl: string;
-		apiKey: string;
-		model?: string;
-	}): Promise<void> {
-		await this.call("/api/opencode/config/set", cfg);
 	}
 
 	/** Run `codex login status`. */

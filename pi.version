@@ -1,0 +1,27 @@
+# pi.version — pinned npm install specs for the coding agents and their ACP
+# adapters. setup.sh reads this file and installs exactly these specs, so image
+# builds are reproducible instead of drifting with upstream releases.
+#
+# Format: one literal npm install spec per line, `<module>@<version>`.
+# Every line MUST carry a version — setup.sh aborts on an unpinned entry.
+# Blank lines and `#` comments are ignored. To upgrade, edit a version here;
+# nothing else needs to change.
+
+# Claude Code — CLI + ACP adapter
+@anthropic-ai/claude-code@2.1.216
+@agentclientprotocol/claude-agent-acp@0.60.0
+
+# Codex — CLI + ACP adapter
+# (@zed-industries/codex-acp is deprecated in favour of the
+#  @agentclientprotocol scope; same codex-acp bin, drop-in.)
+@openai/codex@0.144.6
+@agentclientprotocol/codex-acp@1.1.4
+
+# Pi CLI. The ACP adapter is built from the pinned nested fork by setup.sh.
+@earendil-works/pi-coding-agent@0.80.10
+
+# Pi extensions — setup.sh registers these with `pi install`; a plain global
+# npm installation would put their files on disk without activating them.
+# pi-web-access additionally needs a search-provider key configured in Pi.
+pi-mcp-adapter@2.11.0
+pi-web-access@0.13.0
