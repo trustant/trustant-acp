@@ -108,6 +108,16 @@ when `~/.local/bin` is not already on PATH. A single `npm install -g --force`
 covers CLI and ACP packages. Pi extensions are skipped when the exact pinned
 source is already present in `pi list`, keeping re-runs idempotent.
 
+`pi-acp@0.0.31` performs an update lookup independently from Pi and does not
+honor Pi's `PI_SKIP_VERSION_CHECK` or `PI_OFFLINE` flags. Immediately after the
+pinned global install, `setup.sh` applies a narrow compatibility guard to the
+installed adapter. This prevents its unsolicited `npm view` request and startup
+banner when either flag is set. The patch is idempotent and checks the expected
+adapter structure; setup fails clearly if a future pinned version changes that
+structure, so the compatibility layer must be reviewed rather than silently
+misapplied. This temporary patch can be removed once `pi-acp` supports the flags
+natively.
+
 ## Phases 2 and 3 — build and install
 
 The two phases are gated independently, which is what allows the three-file

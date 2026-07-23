@@ -152,6 +152,38 @@ echo
 # shellcheck disable=SC2086 # Both variables are deliberately word-split specs.
 npm install -g --force $PREFIX_ARGS $GLOBAL_PACKAGES
 
+# pi-acp 0.0.31 performs its own `npm view` update lookup and does not honor
+# Pi's PI_SKIP_VERSION_CHECK/PI_OFFLINE contract. Trustable pins and upgrades
+# this dependency through pi.version, so patch the installed adapter to avoid an
+# unsolicited network request and duplicate banner in managed sessions. The
+# structural check deliberately fails setup when a future adapter changes this
+# code, preventing a silent or partial compatibility patch.
+PI_ACP_ENTRYPOINT="$INSTALL_PREFIX/lib/node_modules/pi-acp/dist/index.js"
+if [ ! -f "$PI_ACP_ENTRYPOINT" ]; then
+	echo "✗ pi-acp was installed but $PI_ACP_ENTRYPOINT was not found." >&2
+	exit 1
+fi
+node - "$PI_ACP_ENTRYPOINT" <<'NODE'
+const fs = require("node:fs");
+
+const entrypoint = process.argv[2];
+const marker = "function buildUpdateNotice() {\n";
+const guard =
+	"  if (process.env.PI_SKIP_VERSION_CHECK || process.env.PI_OFFLINE) return null;\n";
+const source = fs.readFileSync(entrypoint, "utf8");
+
+if (!source.includes(marker + guard)) {
+	const occurrences = source.split(marker).length - 1;
+	if (occurrences !== 1) {
+		console.error(
+			`✗ cannot apply the pi-acp update-check compatibility patch: expected one ${marker.trim()} marker, found ${occurrences}.`,
+		);
+		process.exit(1);
+	}
+	fs.writeFileSync(entrypoint, source.replace(marker, marker + guard));
+}
+NODE
+
 # Resolve the Pi binary from the prefix just populated instead of assuming the
 # caller has already refreshed PATH. This is required in fresh VM/image builds.
 PI_BIN="$INSTALL_PREFIX/bin/pi"

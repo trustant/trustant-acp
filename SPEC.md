@@ -389,6 +389,13 @@ The agents and their adapters:
 - The script installs into npm's global prefix when writable, else falls back to a
   user prefix at `~/.local` (bin → `~/.local/bin`, conventionally on PATH), so no
   sudo is needed. `--force` keeps re-runs idempotent (overwrites stale bin links).
+- `pi-acp@0.0.31` performs its own registry update lookup and does not honor
+  Pi's `PI_SKIP_VERSION_CHECK` or `PI_OFFLINE` flags. After the pinned global
+  install, setup applies an idempotent compatibility guard to the installed
+  adapter so managed/offline sessions make no update request and show no
+  duplicate banner. The patch validates the expected adapter structure and
+  aborts setup if a future pin is incompatible; remove it when `pi-acp` provides
+  native support for these flags.
 - API keys are not handled here — set them in `.env` (`ANTHROPIC_API_KEY`,
   `OPENAI_API_KEY`, `PI_API_KEY`; see `.env.example`).
 - After running it, **restart the server** so the newly-installed binaries are on
