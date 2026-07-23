@@ -491,9 +491,11 @@ Configure screen instead of opening the standalone credential form.
 CLI, and it does *not* honor `OPENAI_BASE_URL` (verified: it always hits
 platform.openai.com). A custom OpenAI-compatible endpoint is configured through
 pi's native `~/.pi/agent/models.json` and `auth.json`: the custom provider
-(`trustable`) keeps endpoint/models plus a `$OPENAI_API_KEY` reference in
-models.json, while the real credential lives only in auth.json. pi-acp then
-discovers them through Pi's native configuration.
+(`local`) keeps endpoint/models plus a `$OPENAI_API_KEY` reference in models.json,
+while the real credential lives only in auth.json. In managed mode, TruACP reads
+the active `local`, `ollama`, or `trustable` provider from
+`settings.json.defaultProvider`; pi-acp then discovers the same native
+configuration.
 The UI flow is **"try, then ask"**: on selecting pi, the server probes the
 configured endpoint with `GET <baseUrl>/models` (`POST /api/pi/hello`) — a fast
 reachability + auth check that avoids the multi-second hang a real completion can
@@ -536,11 +538,13 @@ and refreshed on `config_option_update`. Changing it calls
 works for any agent that exposes model options (claude: Opus/Sonnet/Haiku; others
 after their endpoint/login is configured).
 
-For Pi, Trustable owns the provider boundary. Pi settings contain
-`enabledModels: ["trustable/*"]`, and the TruACP header retains only option
-values with that prefix. Both controls are required because pi-acp currently
-publishes Pi's full built-in provider catalog in `configOptions` even when model
-cycling is scoped by `enabledModels`.
+For Pi, Trustable owns the provider boundary. The active provider is `trustable`
+for the Trustable status catalog, `ollama` for embedded/status-backed Ollama,
+or `local` for provided/custom endpoints. Pi settings contain only
+`enabledModels: ["<active-provider>/*"]`, and the TruACP header retains only
+option values with that same active prefix. Both controls are required because
+pi-acp currently publishes Pi's full built-in provider catalog in
+`configOptions` even when model cycling is scoped by `enabledModels`.
 
 New REST endpoints: `POST /api/pi/hello`, `/api/pi/config/{get,set}`,
 `/api/codex/login-status`, `/api/codex/login-device`,

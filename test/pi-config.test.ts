@@ -33,7 +33,7 @@ describe("Pi native configuration", () => {
 			join(dir, "models.json"),
 			JSON.stringify({
 				providers: {
-					trustable: {
+					local: {
 						baseUrl: "https://models.example/v1",
 						apiKey: "$OPENAI_API_KEY",
 						models: [{ id: "coder" }],
@@ -44,7 +44,7 @@ describe("Pi native configuration", () => {
 		await writeFile(
 			join(dir, "auth.json"),
 			JSON.stringify({
-				trustable: { type: "api_key", key: "real-secret" },
+				local: { type: "api_key", key: "real-secret" },
 			}),
 		);
 		vi.stubGlobal(
@@ -97,25 +97,81 @@ describe("Pi native configuration", () => {
 		const authText = await readFile(join(dir, "auth.json"), "utf8");
 		const settingsText = await readFile(join(dir, "settings.json"), "utf8");
 		const models = JSON.parse(modelsText) as {
-			providers: { trustable: { apiKey: string } };
+			providers: { local: { apiKey: string } };
 		};
 		const auth = JSON.parse(authText) as {
-			trustable: { type: string; key: string };
+			local: { type: string; key: string };
 		};
-		expect(models.providers.trustable.apiKey).toBe("$OPENAI_API_KEY");
+		expect(models.providers.local.apiKey).toBe("$OPENAI_API_KEY");
 		expect(modelsText).not.toContain("standalone-secret");
-		expect(auth.trustable).toEqual({
+		expect(auth.local).toEqual({
 			type: "api_key",
 			key: "standalone-secret",
 		});
 		expect(JSON.parse(settingsText)).toMatchObject({
-			defaultProvider: "trustable",
+			defaultProvider: "local",
 			defaultModel: "coder",
-			enabledModels: ["trustable/*"],
+			enabledModels: ["local/*"],
 		});
 		expect((await stat(join(dir, "models.json"))).mode & 0o777).toBe(0o600);
 		expect((await stat(join(dir, "auth.json"))).mode & 0o777).toBe(0o600);
-		expect((await stat(join(dir, "settings.json"))).mode & 0o777).toBe(0o644);
+		expect((await stat(join(dir, "settings.json"))).mode & 0o777).toBe(
+			0o644,
+		);
+	});
+
+	it("uses the provider selected by Trustable settings", async () => {
+		process.env.TRUSTABLE_MANAGED_RUNTIME = "1";
+		await writeFile(
+			join(dir, "models.json"),
+			JSON.stringify({
+				providers: {
+					trustable: {
+						baseUrl: "https://api.trustable.example/v1",
+						apiKey: "$OPENAI_API_KEY",
+						models: [{ id: "coder" }],
+					},
+					local: {
+						baseUrl: "https://stale.example/v1",
+						apiKey: "$OPENAI_API_KEY",
+						models: [{ id: "stale" }],
+					},
+				},
+			}),
+		);
+		await writeFile(
+			join(dir, "settings.json"),
+			JSON.stringify({ defaultProvider: "trustable" }),
+		);
+		await writeFile(
+			join(dir, "auth.json"),
+			JSON.stringify({
+				trustable: { type: "api_key", key: "managed-secret" },
+				local: { type: "api_key", key: "stale-secret" },
+			}),
+		);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (url: string, init?: RequestInit) => {
+				expect(url).toBe("https://api.trustable.example/v1/models");
+				expect(new Headers(init?.headers).get("authorization")).toBe(
+					"Bearer managed-secret",
+				);
+				return new Response(
+					JSON.stringify({ data: [{ id: "coder" }] }),
+					{
+						status: 200,
+						headers: { "content-type": "application/json" },
+					},
+				);
+			}),
+		);
+
+		expect(await piHello()).toEqual({
+			ok: true,
+			detail: "1 model(s)",
+			managed: true,
+		});
 	});
 
 	it("marks managed probe failures so the UI does not open its local form", async () => {

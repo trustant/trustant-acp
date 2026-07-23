@@ -18,7 +18,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { SessionUpdate, SessionConfigOption } from "../src/types/session";
 import { AcpTransport, type AgentInfo } from "./transport";
-import { trustableModelChoices } from "./model-options";
+import { managedModelChoices } from "./model-options";
 
 // ---- view model -----------------------------------------------------------
 
@@ -563,11 +563,11 @@ export function ChatApp(): React.ReactElement {
 		return opt && opt.type === "select" ? opt : null;
 	}, [configOptions]);
 
-	// pi-acp advertises Pi's full built-in catalog even when settings.json has
-	// enabledModels=["trustable/*"]. Mirror that runtime allowlist here so the
-	// user cannot select an OpenAI or other non-Trustable provider from the UI.
+	// pi-acp advertises Pi's full built-in catalog even when settings.json scopes
+	// the active local/ollama/trustable provider. Mirror that exact prefix here
+	// so stale or built-in providers cannot be selected from the managed UI.
 	const modelChoices = useMemo(
-		() => trustableModelChoices(modelOption),
+		() => managedModelChoices(modelOption),
 		[modelOption],
 	);
 

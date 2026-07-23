@@ -15,13 +15,22 @@ import { chmod, mkdir, readFile, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { join, dirname } from "path";
 
-/** Provider name we register pi's custom OpenAI-compatible endpoint under. */
-export const PI_PROVIDER = "trustable";
+/**
+ * Standalone TruACP receives a user-supplied endpoint, so it belongs to the
+ * neutral local namespace rather than impersonating a Trustable catalog.
+ */
+export const PI_PROVIDER = "local";
+const TRUSTABLE_MANAGED_PI_PROVIDERS = new Set([
+	"local",
+	"ollama",
+	"trustable",
+]);
 const PI_API_KEY_REF = "$OPENAI_API_KEY";
 
 /** ~/.pi/agent/models.json — pi's native custom-provider config. */
 function piModelsPath(): string {
-	const dir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+	const dir =
+		process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
 	return join(dir, "models.json");
 }
 
@@ -36,6 +45,7 @@ function piSettingsPath(): string {
 }
 
 interface StoredPiConfig {
+	provider: string;
 	baseUrl: string;
 	apiKeyRef: string;
 	model: string;
@@ -63,11 +73,26 @@ async function writePrivateJSON(
 	await chmod(path, 0o600);
 }
 
+/**
+ * Trustable selects one managed provider in settings.json. Falling back to
+ * local preserves standalone behavior without allowing arbitrary built-in Pi
+ * providers to cross the managed runtime boundary.
+ */
+async function activePiProvider(): Promise<string> {
+	const settings = await readJSONObject(piSettingsPath());
+	const configured = settings.defaultProvider;
+	return typeof configured === "string" &&
+		TRUSTABLE_MANAGED_PI_PROVIDERS.has(configured)
+		? configured
+		: PI_PROVIDER;
+}
+
 /** Read provider metadata without exposing its key/reference to an API caller. */
 async function readStoredPiConfig(): Promise<StoredPiConfig | null> {
 	const json = await readJSONObject(piModelsPath());
 	const providers = json.providers as Record<string, unknown> | undefined;
-	const provider = providers?.[PI_PROVIDER] as
+	const providerName = await activePiProvider();
+	const provider = providers?.[providerName] as
 		| Record<string, unknown>
 		| undefined;
 	if (!provider) return null;
@@ -75,6 +100,7 @@ async function readStoredPiConfig(): Promise<StoredPiConfig | null> {
 		? (provider.models as Array<{ id?: unknown }>)
 		: [];
 	return {
+		provider: providerName,
 		baseUrl: typeof provider.baseUrl === "string" ? provider.baseUrl : "",
 		apiKeyRef: typeof provider.apiKey === "string" ? provider.apiKey : "",
 		model: typeof models[0]?.id === "string" ? models[0].id : "",
@@ -87,9 +113,12 @@ async function readStoredPiConfig(): Promise<StoredPiConfig | null> {
  * configurations can still fall back to an environment variable or legacy
  * literal key. auth.json wins so a generic/dummy process env cannot mask it.
  */
-async function resolvePiApiKey(apiKeyRef: string): Promise<string> {
+async function resolvePiApiKey(
+	providerName: string,
+	apiKeyRef: string,
+): Promise<string> {
 	const auth = await readJSONObject(piAuthPath());
-	const entry = auth[PI_PROVIDER];
+	const entry = auth[providerName];
 	if (typeof entry === "string" && entry) return entry;
 	if (entry && typeof entry === "object") {
 		const key = (entry as Record<string, unknown>).key;
@@ -146,7 +175,11 @@ export async function probeModels(
 			signal: ctrl.signal,
 		});
 		if (!res.ok) {
-			return { ok: false, models: [], detail: `HTTP ${res.status} from ${url}` };
+			return {
+				ok: false,
+				models: [],
+				detail: `HTTP ${res.status} from ${url}`,
+			};
 		}
 		const json = (await res.json()) as { data?: Array<{ id?: string }> };
 		const models = (json.data ?? [])
@@ -156,8 +189,13 @@ export async function probeModels(
 			? { ok: true, models, detail: `${models.length} model(s)` }
 			: { ok: false, models: [], detail: "Endpoint returned no models." };
 	} catch (e) {
-		const msg = (e as Error).name === "AbortError" ? "timed out" : String(e);
-		return { ok: false, models: [], detail: `Could not reach ${url}: ${msg}` };
+		const msg =
+			(e as Error).name === "AbortError" ? "timed out" : String(e);
+		return {
+			ok: false,
+			models: [],
+			detail: `Could not reach ${url}: ${msg}`,
+		};
 	} finally {
 		clearTimeout(timer);
 	}
@@ -183,7 +221,7 @@ export async function readPiConfig(): Promise<Partial<PiConfig>> {
 }
 
 /**
- * Write/merge a custom OpenAI-compatible provider named PI_PROVIDER into pi's
+ * Write/merge a custom OpenAI-compatible provider named `local` into pi's
  * models.json/auth.json, preserving any other providers the user configured.
  * The credential is written only to auth.json; models.json receives the same
  * environment reference used by Trustable-managed installations.
@@ -219,7 +257,7 @@ export async function writePiProvider(cfg: PiConfig): Promise<void> {
 
 	// Pi ships a built-in catalog independently from custom models.json
 	// providers. Persist an explicit provider scope so standalone TruACP cannot
-	// start or cycle into a non-Trustable model after saving this endpoint.
+	// start or cycle outside the local endpoint after saving it.
 	const settings = await readJSONObject(piSettingsPath());
 	settings.defaultProvider = PI_PROVIDER;
 	settings.defaultModel = models[0];
@@ -249,9 +287,13 @@ export async function piHello(): Promise<PiHelloResult> {
 	if (!cfg?.baseUrl) {
 		return { ok: false, detail: "Pi is not configured.", managed };
 	}
-	const apiKey = await resolvePiApiKey(cfg.apiKeyRef);
+	const apiKey = await resolvePiApiKey(cfg.provider, cfg.apiKeyRef);
 	if (!apiKey) {
-		return { ok: false, detail: "Pi credential is not configured.", managed };
+		return {
+			ok: false,
+			detail: "Pi credential is not configured.",
+			managed,
+		};
 	}
 	const probe = await probeModels(cfg.baseUrl, apiKey);
 	return { ok: probe.ok, detail: probe.detail, managed };
