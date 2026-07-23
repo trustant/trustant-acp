@@ -340,16 +340,13 @@ so any failing step aborts it.
 
 ```
 setup.sh + pi.version + dist-bin/truacp.cjs + pi-acp-package.tgz
-    + trustable-guardrails.ts
 ```
 
 it installs a complete, working truacp into `~/.local/bin` — no `package.json`,
 no `node_modules`, no secondary installer, and no network beyond npm for the
 remaining agents. Source mode builds the nested fork; image mode supplies the
-tarball produced from that same source revision. The fifth artifact is the
-reviewed Pi `tool_call` extension that prevents credentials from entering model
-context. Phase 3 is the only launcher implementation, so source, VM, and image
-runtimes cannot drift.
+tarball produced from that same source revision. Phase 3 is the only launcher
+implementation, so source, VM, and image runtimes cannot drift.
 
 ### Preflight
 
@@ -503,14 +500,10 @@ raw argv. The fork validates the version and converts only typed extension,
 skill, prompt-template, and session-directory fields into discrete arguments.
 Other ACP agents never receive this metadata.
 
-In a Trustable-managed launch, TruACP also supplies the installed
-`trustable-guardrails.ts` path through the typed extension list. The launcher,
-not the browser, owns that path via `TRUSTABLE_PI_EXTENSION`. Pi loads the
-extension before built-in tools execute; its `tool_call` hook blocks reads,
-writes, edits, shell environment dumps, and programmatic access to credential
-files or secret-bearing environment values. Template files such as
-`.env.example` remain readable. This is a narrow data-loss-prevention boundary,
-not a replacement for the removed OpenCode completion/recovery state machine.
+The typed contract is the transport for extensions selected by a trusted
+server-side configuration. Issue #58 does not install a Trustable execution
+policy or credential guardrail: that policy, its ownership, and its acceptance
+tests belong to issue #57. Browser requests cannot inject extension paths.
 
 The fork reports `_meta.piAcp.activity` version 1 on `session_info_update`.
 `thinking`, `responding`, tool-specific states, `retrying`, `compacting`,

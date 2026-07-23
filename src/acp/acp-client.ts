@@ -489,8 +489,6 @@ export class AcpClient {
 	 */
 	private sessionRequestMeta(): Record<string, unknown> {
 		if (this.currentConfig?.id !== "pi") return {};
-		const managedExtension =
-			process.env.TRUSTABLE_PI_EXTENSION?.trim() || undefined;
 		return {
 			_meta: {
 				trustable: {
@@ -498,13 +496,6 @@ export class AcpClient {
 						version: 1,
 						extensions: {
 							discover: true,
-							// WHY: setup installs the reviewed guardrail source
-							// outside user workbenches. Passing the absolute path
-							// as typed metadata makes every managed Pi session load
-							// it without accepting arbitrary browser-provided argv.
-							...(managedExtension
-								? { paths: [managedExtension] }
-								: {}),
 						},
 						skills: { discover: true },
 					},

@@ -20,9 +20,6 @@ describe("setup.sh Trustable Pi ACP fork", () => {
 		expect(setup).toContain(
 			"$INSTALL_PREFIX/lib/node_modules/pi-acp/dist/index.js",
 		);
-		expect(setup).toContain(
-			'export TRUSTABLE_PI_EXTENSION="$EXTENSION_DIR/trustable-guardrails.ts"',
-		);
 		expect(versions).not.toMatch(/^pi-acp@/m);
 		expect(setup).not.toContain("npm view");
 	});
