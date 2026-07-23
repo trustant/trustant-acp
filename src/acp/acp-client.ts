@@ -930,7 +930,11 @@ export class AcpClient {
 
 		try {
 			this.logger.log(`[AcpClient] Deleting session: ${sessionId}...`);
-			await connection.agent.deleteSession({ sessionId });
+			// WHY: session/delete is still an optional ACP capability and the SDK
+			// build used by the standalone runtime does not expose a generated
+			// deleteSession() helper. The generic JSON-RPC request is the portable
+			// protocol path, as it is for the other unstable session methods.
+			await connection.agent.request("session/delete", { sessionId });
 			this.logger.log(`[AcpClient] Session deleted: ${sessionId}`);
 		} catch (error) {
 			this.logger.error("[AcpClient] Delete Session Error:", error);

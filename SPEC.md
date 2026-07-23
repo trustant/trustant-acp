@@ -146,8 +146,10 @@ Single JSON file, loaded at server start, hot-reloadable via the settings API. S
 
 **REST** (request/response), one handler per current `AcpClient` method:
 - `POST /session/initialize`, `/session/new`, `/session/load`, `/session/resume`, `/session/fork`, `/session/list` — each accepts an optional `cwd` (see §10e); `/session/new` creates the session in `cwd ?? projectDir`.
-- `POST /session/delete` calls standard ACP `session/delete` and clears the
-  TruACP metadata only after the owning agent confirms deletion.
+- `POST /session/delete` sends the standard ACP `session/delete` JSON-RPC
+  request through the generic request API because compatible SDK builds do not
+  consistently expose the optional generated helper. TruACP clears its metadata
+  only after the owning agent confirms deletion.
 - `POST /session/:id/prompt`, `/session/:id/cancel`, `/session/:id/config-option`, `/session/:id/mode`
 - `GET /api/directory` (current default cwd), `POST /api/directory` (change default cwd) — see §10e.
 - `POST /permission/:id` (approve/reject)
