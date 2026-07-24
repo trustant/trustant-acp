@@ -608,20 +608,19 @@ offers only `off`. A reasoning model supports the standard levels through
 non-null. This keeps the ACP response aligned with Pi's real clamping behavior
 and prevents the managed default from producing a false compatibility error.
 
-**Managed write mode for Codex and Claude.** Before the first prompt can be sent
-after selecting, creating, loading, resuming, or reconnecting one of these
-agents, TruACP applies and verifies the write-capable mode advertised through
-ACP `configOptions`: Codex uses `agent` (the Codex adapter's workspace-write
-mode) and Claude uses `acceptEdits`. This removes permission prompts for
-ordinary create/edit/delete operations inside the session cwd/workbench. TruACP
-resolves the real mode
-option by ACP category/id and must surface a compatibility error instead of
-silently continuing in read-only/manual mode when the required value is absent.
-The managed policy does not select Codex `agent-full-access`, Claude
-`bypassPermissions`, or global `permissions.autoAllow=true`: those choices are
-broader than workbench writes and could approve unrelated permission classes.
-Workspace boundaries, privilege escalation, and operations outside the
-workbench remain governed by deterministic policy. Custom agents keep their
+**Managed autonomous mode for Codex and Claude.** Before the first prompt can be
+sent after selecting, creating, loading, resuming, or reconnecting one of these
+agents, TruACP applies and verifies the no-prompt mode advertised through ACP
+`configOptions`: Codex uses `agent-full-access` and Claude uses
+`bypassPermissions`. Their narrower `agent` / `acceptEdits` modes are not
+sufficient: the adapters may still request approval for ordinary shell commands
+such as reading a source file. TruACP resolves the real mode option by ACP
+category/id and must surface a compatibility error instead of silently
+continuing in a prompted or read-only mode when the required value is absent.
+Global `permissions.autoAllow` remains `false`; the full-permission decision is
+explicit and agent-specific rather than approving arbitrary permission requests
+from custom agents. In a Trustable-managed deployment, the VM or pod is the
+isolation boundary for these autonomous agents. Custom agents keep their
 advertised/default permission behavior.
 
 For Pi, Trustable owns the provider boundary. The active provider is `trustable`
@@ -711,9 +710,9 @@ that today only reads config): `setProjectDir(dir)` updates the field consulted 
   advertised subset of `high`/`xhigh`, persists independently per agent, and
   sends the real adapter config id. Change model and confirm the choices are
   reconciled without a silent downgrade.
-- For Codex, verify session readiness applies `agent`/workspace-write; for Claude,
-  verify it applies `acceptEdits`. Normal workbench file changes must not create
-  a permission prompt, while neither agent enters full-access/bypass mode.
+- For Codex, verify session readiness applies `agent-full-access`; for Claude,
+  verify it applies `bypassPermissions`. Reading files, running ordinary shell
+  commands, and modifying the workbench must not create permission prompts.
 
 New REST endpoints: `GET /api/directory`, `POST /api/directory`.
 

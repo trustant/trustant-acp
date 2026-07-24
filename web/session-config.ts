@@ -89,9 +89,9 @@ function managedWriteMode(
 } | null {
 	const required =
 		agentId === "codex"
-			? { value: "agent", label: "workspace-write" }
+			? { value: "agent-full-access", label: "agent-full-access" }
 			: agentId === "claude"
-				? { value: "acceptEdits", label: "acceptEdits" }
+				? { value: "bypassPermissions", label: "bypassPermissions" }
 				: null;
 	if (!required) return null;
 
@@ -125,10 +125,12 @@ function currentSelectValue(
 }
 
 /**
- * Apply deterministic managed defaults before the chat becomes ready. Codex
- * and Claude receive only their sandboxed edit-capable modes; broad
- * agent-full-access/bypass settings and the global auto-allow switch are
- * deliberately outside this path.
+ * Apply deterministic managed defaults before the chat becomes ready.
+ *
+ * WHY: Codex `agent` and Claude `acceptEdits` still prompt for ordinary shell
+ * commands. Trustable runs these agents inside its VM/pod isolation boundary,
+ * so managed sessions deliberately select their advertised no-prompt modes
+ * while leaving the global auto-allow switch disabled for custom agents.
  */
 export async function applyManagedSessionConfig(args: {
 	agentId: string;

@@ -136,7 +136,7 @@ describe("managed reasoning configuration", () => {
 });
 
 describe("managed write modes", () => {
-	it("applies Codex agent mode before reasoning without full access", async () => {
+	it("applies Codex full access before reasoning", async () => {
 		const initial = [
 			selectOption("mode", "mode", "default", [
 				"default",
@@ -157,15 +157,15 @@ describe("managed write modes", () => {
 		});
 
 		expect(setter.setConfigOption.mock.calls).toEqual([
-			["mode", "agent"],
+			["mode", "agent-full-access"],
 			["reasoning_effort", "high"],
 		]);
-		expect(setter.current()).not.toContainEqual(
+		expect(setter.current()).toContainEqual(
 			expect.objectContaining({ currentValue: "agent-full-access" }),
 		);
 	});
 
-	it("applies Claude acceptEdits without selecting bypassPermissions", async () => {
+	it("applies Claude bypassPermissions before reasoning", async () => {
 		const initial = [
 			selectOption("mode", "mode", "default", [
 				"default",
@@ -183,10 +183,10 @@ describe("managed write modes", () => {
 		});
 
 		expect(setter.setConfigOption.mock.calls).toEqual([
-			["mode", "acceptEdits"],
+			["mode", "bypassPermissions"],
 			["effort", "high"],
 		]);
-		expect(setter.current()).not.toContainEqual(
+		expect(setter.current()).toContainEqual(
 			expect.objectContaining({ currentValue: "bypassPermissions" }),
 		);
 	});
