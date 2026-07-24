@@ -113,6 +113,10 @@ body {
 	display: flex;
 	flex-direction: column;
 	gap: 0.75rem;
+	/* WHY: the managed chat is often embedded in another Trustable page.
+	   Keep transcript selection explicit so host styles cannot turn normal
+	   copy/paste into a drag-only or non-selectable surface. */
+	user-select: text;
 }
 .empty {
 	color: var(--muted);
@@ -142,9 +146,51 @@ body {
 	max-width: 100%;
 	white-space: normal;
 }
+.turn-actions {
+	display: flex;
+	margin-top: 0.2rem;
+}
+.turn.user .turn-actions {
+	justify-content: flex-end;
+}
+.copy-action {
+	border: 1px solid transparent;
+	border-radius: 5px;
+	padding: 0.12rem 0.4rem;
+	background: transparent;
+	color: var(--muted);
+	font: inherit;
+	font-size: 0.72rem;
+	line-height: 1.35;
+	cursor: pointer;
+}
+.copy-action:hover,
+.copy-action:focus-visible {
+	border-color: var(--border);
+	background: var(--bg-alt);
+	color: var(--text);
+}
+.copy-action.state-copied {
+	color: #16a34a;
+}
+.copy-action.state-failed {
+	color: var(--error-text);
+}
+.markdown-code-block {
+	position: relative;
+}
+.markdown-code-block .code-copy-action {
+	position: absolute;
+	z-index: 1;
+	top: 0.35rem;
+	right: 0.35rem;
+	background: var(--bg);
+	border-color: var(--border);
+}
 .markdown pre {
 	background: var(--bg-alt);
 	padding: 0.7rem;
+	padding-top: 2rem;
 	border-radius: 8px;
 	overflow-x: auto;
 	font-family: var(--mono);
@@ -519,8 +565,9 @@ body {
 	cursor: default;
 }
 
-/* Model selector in the topbar */
-.topbar .model-select {
+/* ACP model and reasoning controls share compact topbar affordances. */
+.topbar .model-select,
+.topbar .reasoning-select {
 	font: inherit;
 	padding: 0.3rem 0.5rem;
 	border: 1px solid var(--border);
@@ -530,7 +577,11 @@ body {
 	cursor: pointer;
 	max-width: 12rem;
 }
-.topbar .model-select:disabled {
+.topbar .reasoning-select {
+	max-width: 9rem;
+}
+.topbar .model-select:disabled,
+.topbar .reasoning-select:disabled {
 	opacity: 0.5;
 	cursor: default;
 }

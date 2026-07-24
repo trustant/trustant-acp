@@ -22,7 +22,19 @@ import type {
 	SessionInfo,
 } from "../src/types/session";
 import { AcpTransport, type AgentInfo } from "./transport";
-import { managedModelChoices } from "./model-options";
+import { modelChoicesForAgent } from "./model-options";
+import { copyText } from "./clipboard";
+import {
+	createPromptHistoryCursor,
+	navigatePromptHistory,
+} from "./prompt-history";
+import {
+	applyManagedSessionConfig,
+	managedReasoningConfig,
+	readReasoningPreference,
+	writeReasoningPreference,
+	type ManagedReasoningEffort,
+} from "./session-config";
 
 // ---- view model -----------------------------------------------------------
 
@@ -97,6 +109,14 @@ const transport = new AcpTransport("");
 const MANAGED_PI_CONFIG_MESSAGE =
 	"Pi is configured by Trustable. Return to the Trustable application list and use Configure to change the endpoint, API key, or model.";
 
+function browserPreferenceStorage(): Storage | null {
+	try {
+		return window.localStorage;
+	} catch {
+		return null;
+	}
+}
+
 export function ChatApp(): React.ReactElement {
 	const [agents, setAgents] = useState<AgentInfo[]>([]);
 	const [agentId, setAgentId] = useState<string>("");
@@ -114,6 +134,7 @@ export function ChatApp(): React.ReactElement {
 		null,
 	);
 	const [input, setInput] = useState("");
+	const [piManaged, setPiManaged] = useState<boolean | null>(null);
 	const [historyOpen, setHistoryOpen] = useState(false);
 	const [historyLoading, setHistoryLoading] = useState(false);
 	const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -138,8 +159,35 @@ export function ChatApp(): React.ReactElement {
 	const [claudeAuth, setClaudeAuth] = useState<ClaudeAuthModal | null>(null);
 
 	const sessionRef = useRef<string | null>(null);
+	const configReconcileRef = useRef(false);
 	const activityStartedAtRef = useRef<number | null>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const promptHistoryRef = useRef(createPromptHistoryCursor());
+
+	const userPrompts = useMemo(
+		() =>
+			turns
+				.filter((turn): turn is UserTurn => turn.kind === "user")
+				.map((turn) => turn.text)
+				.filter((text) => text.trim() !== ""),
+		[turns],
+	);
+
+	const resetPromptHistory = useCallback((draft = "") => {
+		promptHistoryRef.current = createPromptHistoryCursor(draft);
+	}, []);
+
+	const handleComposerChange = useCallback(
+		(value: string) => {
+			// WHY: editing a recalled prompt starts a new draft. Continuing to
+			// treat it as a historical entry would make the next arrow key jump
+			// unpredictably and could discard what the user just changed.
+			resetPromptHistory(value);
+			setInput(value);
+		},
+		[resetPromptHistory],
+	);
 
 	// Load agent catalog. The server's defaultAgentId (pi by default) is
 	// preselected and auto-connected below; the pull-down still lets the user
@@ -297,6 +345,71 @@ export function ChatApp(): React.ReactElement {
 		[],
 	);
 
+	/**
+	 * Apply managed config before exposing a session as ready. The ACP adapter
+	 * remains the capability source: this path uses its real config ids and
+	 * verifies returned state instead of writing provider-specific config files.
+	 */
+	const configureSession = useCallback(
+		async (
+			id: string,
+			sessionId: string,
+			options: SessionConfigOption[],
+		): Promise<SessionConfigOption[]> => {
+			const result = await applyManagedSessionConfig({
+				agentId: id,
+				configOptions: options,
+				savedReasoningEffort: readReasoningPreference(
+					id,
+					browserPreferenceStorage(),
+				),
+				setConfigOption: (configId, value) =>
+					transport.setSessionConfigOption(
+						sessionId,
+						configId,
+						value,
+					),
+			});
+			if (result.reasoningEffort) {
+				writeReasoningPreference(
+					id,
+					result.reasoningEffort,
+					browserPreferenceStorage(),
+				);
+			}
+			return result.configOptions;
+		},
+		[],
+	);
+
+	useEffect(() => {
+		const sessionId = sessionRef.current;
+		if (
+			!ready ||
+			busy ||
+			running ||
+			!agentId ||
+			!sessionId ||
+			configReconcileRef.current
+		) {
+			return;
+		}
+
+		// WHY: adapters can publish model/config changes independently of the
+		// dropdown response (for example after a slash command). Reconcile those
+		// updates once the active turn is idle so unsupported xhigh or a reverted
+		// read-only mode never remains as silently inconsistent UI state.
+		configReconcileRef.current = true;
+		void configureSession(agentId, sessionId, configOptions)
+			.then((updated) => setConfigOptions(updated))
+			.catch((cause: unknown) =>
+				setError(String((cause as Error).message ?? cause)),
+			)
+			.finally(() => {
+				configReconcileRef.current = false;
+			});
+	}, [agentId, busy, configOptions, configureSession, ready, running]);
+
 	/** Initialize + open a session for `id`, flipping the chat to ready. */
 	const doConnect = useCallback(
 		async (id: string) => {
@@ -305,10 +418,13 @@ export function ChatApp(): React.ReactElement {
 			try {
 				await transport.initialize(id);
 				const session = await transport.newSession(id);
+				const configured = await configureSession(
+					id,
+					session.sessionId,
+					session.configOptions ?? [],
+				);
 				sessionRef.current = session.sessionId;
-				// Model/mode selectors come from the session's config options,
-				// available immediately after connect.
-				setConfigOptions(session.configOptions ?? []);
+				setConfigOptions(configured);
 				setReady(true);
 			} catch (e) {
 				const msg = String((e as Error).message ?? e);
@@ -319,14 +435,17 @@ export function ChatApp(): React.ReactElement {
 				) {
 					const agent = id as "pi";
 					const hello = await endpointHello(agent).catch(() => null);
+					setPiManaged(hello?.managed ?? null);
 					if (hello?.managed) {
 						setBusy(false);
 						setError(`${MANAGED_PI_CONFIG_MESSAGE} (${msg})`);
 						return;
 					}
-					const cfg = await endpointConfigGet(agent).catch(
-						() => ({}),
-					);
+					const cfg = await endpointConfigGet(agent).catch(() => ({
+						baseUrl: undefined,
+						apiKey: undefined,
+						model: undefined,
+					}));
 					setBusy(false);
 					setError(`${agent} connection failed: ${msg}`);
 					setEndpointCfg({
@@ -343,7 +462,7 @@ export function ChatApp(): React.ReactElement {
 				setBusy(false);
 			}
 		},
-		[endpointConfigGet, endpointHello],
+		[configureSession, endpointConfigGet, endpointHello],
 	);
 
 	/**
@@ -377,6 +496,9 @@ export function ChatApp(): React.ReactElement {
 			setEndpointCfg(null);
 			setCodexAuth(null);
 			setClaudeAuth(null);
+			setPiManaged(null);
+			setInput("");
+			resetPromptHistory();
 
 			if (!id) return; // placeholder — leave chat disabled
 
@@ -400,6 +522,7 @@ export function ChatApp(): React.ReactElement {
 					// completion here because cold coding models can stall the UI.
 					const agent = id as "pi";
 					const hello = await endpointHello(agent);
+					setPiManaged(hello.managed);
 					if (!hello.ok) {
 						// Trustable owns provider credentials in managed mode. Opening
 						// TruACP's standalone form would duplicate or expose that secret.
@@ -411,7 +534,11 @@ export function ChatApp(): React.ReactElement {
 							return;
 						}
 						const cfg = await endpointConfigGet(agent).catch(
-							() => ({}),
+							() => ({
+								baseUrl: undefined,
+								apiKey: undefined,
+								model: undefined,
+							}),
 						);
 						setBusy(false);
 						setEndpointCfg({
@@ -445,7 +572,7 @@ export function ChatApp(): React.ReactElement {
 
 			await doConnect(id);
 		},
-		[doConnect, endpointHello, endpointConfigGet],
+		[doConnect, endpointHello, endpointConfigGet, resetPromptHistory],
 	);
 
 	// Auto-connect to the server's default agent (pi by default) once the agent
@@ -464,6 +591,7 @@ export function ChatApp(): React.ReactElement {
 		const sessionId = sessionRef.current;
 		if (!text || !sessionId || running) return;
 		setInput("");
+		resetPromptHistory();
 		setTurns((prev) => [
 			...prev,
 			{ kind: "user", id: `u-${prev.length}`, text },
@@ -490,7 +618,62 @@ export function ChatApp(): React.ReactElement {
 				timestamp: new Date().toISOString(),
 			});
 		}
-	}, [input, running]);
+	}, [input, resetPromptHistory, running]);
+
+	const navigateComposerHistory = useCallback(
+		(e: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
+			if (
+				(e.key !== "ArrowUp" && e.key !== "ArrowDown") ||
+				e.nativeEvent.isComposing ||
+				e.altKey ||
+				e.ctrlKey ||
+				e.metaKey ||
+				e.shiftKey
+			) {
+				return false;
+			}
+
+			const textarea = e.currentTarget;
+			if (textarea.selectionStart !== textarea.selectionEnd) return false;
+
+			const inHistory = promptHistoryRef.current.index !== -1;
+			if (
+				e.key === "ArrowUp" &&
+				!inHistory &&
+				input !== "" &&
+				textarea.selectionStart !== 0
+			) {
+				// WHY: a non-empty multiline composer keeps native cursor
+				// movement. History starts from an empty composer or the first
+				// character, then owns Up/Down until the draft is restored.
+				return false;
+			}
+			if (e.key === "ArrowDown" && !inHistory) return false;
+
+			const result = navigatePromptHistory(
+				userPrompts,
+				input,
+				promptHistoryRef.current,
+				e.key === "ArrowUp" ? "older" : "newer",
+			);
+			if (!result.handled) return false;
+
+			e.preventDefault();
+			promptHistoryRef.current = result.cursor;
+			setInput(result.value);
+			window.requestAnimationFrame(() => {
+				const current = textareaRef.current;
+				if (!current) return;
+				current.focus();
+				current.setSelectionRange(
+					result.value.length,
+					result.value.length,
+				);
+			});
+			return true;
+		},
+		[input, userPrompts],
+	);
 
 	const stop = useCallback(async () => {
 		const sessionId = sessionRef.current;
@@ -516,18 +699,32 @@ export function ChatApp(): React.ReactElement {
 		setError(null);
 		try {
 			const session = await transport.newSession(agentId, projectDir);
+			const configured = await configureSession(
+				agentId,
+				session.sessionId,
+				session.configOptions ?? [],
+			);
 			sessionRef.current = session.sessionId;
 			setTurns([]);
 			setPermission(null);
-			setConfigOptions(session.configOptions ?? []);
+			setConfigOptions(configured);
 			setActivity(null);
+			setInput("");
+			resetPromptHistory();
 			setReady(true);
 		} catch (e) {
 			setError(String((e as Error).message ?? e));
 		} finally {
 			setBusy(false);
 		}
-	}, [agentId, busy, projectDir, running]);
+	}, [
+		agentId,
+		busy,
+		configureSession,
+		projectDir,
+		resetPromptHistory,
+		running,
+	]);
 
 	const openHistory = useCallback(async () => {
 		if (!agentId || !ready || running) return;
@@ -591,14 +788,21 @@ export function ChatApp(): React.ReactElement {
 			setTurns([]);
 			setPermission(null);
 			setError(null);
+			setInput("");
+			resetPromptHistory();
 			try {
 				const session = await transport.loadSession(
 					agentId,
 					selected.sessionId,
 					selected.cwd,
 				);
+				const configured = await configureSession(
+					agentId,
+					session.sessionId,
+					session.configOptions ?? [],
+				);
 				sessionRef.current = session.sessionId;
-				setConfigOptions(session.configOptions ?? []);
+				setConfigOptions(configured);
 				setReady(true);
 			} catch (e) {
 				setError(String((e as Error).message ?? e));
@@ -606,7 +810,7 @@ export function ChatApp(): React.ReactElement {
 				setBusy(false);
 			}
 		},
-		[agentId, running],
+		[agentId, configureSession, resetPromptHistory, running],
 	);
 
 	const respond = useCallback(
@@ -637,6 +841,7 @@ export function ChatApp(): React.ReactElement {
 				apiKey: apiKey.trim(),
 			});
 			const hello = await endpointHello(agent);
+			setPiManaged(hello.managed);
 			if (!hello.ok) {
 				setError(
 					`${agent} did not respond: ${hello.detail || "unknown error"}`,
@@ -715,7 +920,11 @@ export function ChatApp(): React.ReactElement {
 					setError(MANAGED_PI_CONFIG_MESSAGE);
 					return;
 				}
-				const cfg = await endpointConfigGet(agent).catch(() => ({}));
+				const cfg = await endpointConfigGet(agent).catch(() => ({
+					baseUrl: undefined,
+					apiKey: undefined,
+					model: undefined,
+				}));
 				setEndpointCfg({
 					agent,
 					baseUrl: cfg.baseUrl ?? "",
@@ -761,15 +970,23 @@ export function ChatApp(): React.ReactElement {
 		return opt && opt.type === "select" ? opt : null;
 	}, [configOptions]);
 
-	// pi-acp advertises Pi's full built-in catalog even when settings.json scopes
-	// the active local/ollama/trustable provider. Mirror that exact prefix here
-	// so stale or built-in providers cannot be selected from the managed UI.
+	// WHY: only managed Pi needs provider-prefix filtering. Codex, Claude, and
+	// custom agents must keep the complete model catalog advertised over ACP.
 	const modelChoices = useMemo(
-		() => managedModelChoices(modelOption),
-		[modelOption],
+		() => modelChoicesForAgent(modelOption, agentId, piManaged),
+		[agentId, modelOption, piManaged],
 	);
 
-	/** Set the model via the ACP config-option API; refresh options from result. */
+	const reasoningConfig = useMemo(
+		() => managedReasoningConfig(configOptions),
+		[configOptions],
+	);
+
+	/**
+	 * Set the model through ACP, then re-apply the managed reasoning preference.
+	 * Model changes can replace the advertised reasoning choices, so retaining
+	 * stale configOptions here could display or submit an unsupported xhigh.
+	 */
 	const setModel = useCallback(
 		async (value: string) => {
 			const sessionId = sessionRef.current;
@@ -780,12 +997,54 @@ export function ChatApp(): React.ReactElement {
 					modelOption.id,
 					value,
 				);
+				setConfigOptions(
+					await configureSession(agentId, sessionId, updated),
+				);
+			} catch (e) {
+				setError(String((e as Error).message ?? e));
+			}
+		},
+		[agentId, configureSession, modelOption],
+	);
+
+	/** Persist and verify a user-selected reasoning effort via its real ACP id. */
+	const setReasoningEffort = useCallback(
+		async (value: ManagedReasoningEffort) => {
+			const sessionId = sessionRef.current;
+			if (
+				!sessionId ||
+				!reasoningConfig ||
+				!reasoningConfig.choices.some(
+					(choice) => choice.value === value,
+				)
+			) {
+				return;
+			}
+			try {
+				const updated = await transport.setSessionConfigOption(
+					sessionId,
+					reasoningConfig.option.id,
+					value,
+				);
+				const confirmed = managedReasoningConfig(updated);
+				if (!confirmed || confirmed.option.currentValue !== value) {
+					throw new Error(
+						`The ACP adapter did not apply reasoning effort ${value}.`,
+					);
+				}
+				// WHY: preferences are intentionally per agent. A Codex choice
+				// must never become the implicit Pi or Claude default.
+				writeReasoningPreference(
+					agentId,
+					value,
+					browserPreferenceStorage(),
+				);
 				setConfigOptions(updated);
 			} catch (e) {
 				setError(String((e as Error).message ?? e));
 			}
 		},
-		[modelOption],
+		[agentId, reasoningConfig],
 	);
 
 	return (
@@ -827,9 +1086,33 @@ export function ChatApp(): React.ReactElement {
 						))}
 					</select>
 				)}
+				{ready && reasoningConfig && (
+					<select
+						className="reasoning-select"
+						title="Reasoning effort"
+						aria-label="Reasoning effort"
+						value={reasoningConfig.option.currentValue}
+						disabled={busy || running}
+						onChange={(e) =>
+							void setReasoningEffort(
+								e.target.value as ManagedReasoningEffort,
+							)
+						}
+					>
+						{reasoningConfig.choices.map((choice) => (
+							<option key={choice.value} value={choice.value}>
+								{choice.name}
+							</option>
+						))}
+					</select>
+				)}
 				{/* Gear: reconfigure endpoint (pi) or renew login
 				    (codex/claude) for the selected agent. */}
-				{(agentId === "pi" ||
+				{/* WHY: Trustable Configure is the only credential/model owner
+				    for managed Pi. Hiding its redundant gear avoids a control
+				    that can only produce an error, while standalone Pi and the
+				    Codex/Claude login-renewal actions remain available. */}
+				{((agentId === "pi" && piManaged === false) ||
 					agentId === "codex" ||
 					agentId === "claude") && (
 					<button
@@ -1209,13 +1492,15 @@ export function ChatApp(): React.ReactElement {
 
 			<footer className="composer">
 				<textarea
+					ref={textareaRef}
 					value={input}
 					placeholder={
 						ready ? "Message the agent…" : "Please Select Agent"
 					}
 					disabled={!ready || running}
-					onChange={(e) => setInput(e.target.value)}
+					onChange={(e) => handleComposerChange(e.target.value)}
 					onKeyDown={(e) => {
+						if (navigateComposerHistory(e)) return;
 						if (e.key === "Enter" && !e.shiftKey) {
 							e.preventDefault();
 							void send();
@@ -1253,11 +1538,92 @@ function formatElapsed(seconds: number): string {
 
 // ---- turn rendering -------------------------------------------------------
 
+type CopyState = "idle" | "copied" | "failed";
+
+function CopyAction({
+	text,
+	code = false,
+}: {
+	text: string;
+	code?: boolean;
+}): React.ReactElement {
+	const [state, setState] = useState<CopyState>("idle");
+	const resetTimerRef = useRef<number | null>(null);
+
+	useEffect(
+		() => () => {
+			if (resetTimerRef.current !== null) {
+				window.clearTimeout(resetTimerRef.current);
+			}
+		},
+		[],
+	);
+
+	const handleCopy = useCallback(async () => {
+		const copied = await copyText(text);
+		setState(copied ? "copied" : "failed");
+		if (resetTimerRef.current !== null) {
+			window.clearTimeout(resetTimerRef.current);
+		}
+		resetTimerRef.current = window.setTimeout(
+			() => setState("idle"),
+			copied ? 1600 : 3000,
+		);
+	}, [text]);
+
+	const label =
+		state === "copied"
+			? "Copied"
+			: state === "failed"
+				? "Copy failed"
+				: "Copy";
+	return (
+		<button
+			type="button"
+			className={`copy-action${code ? " code-copy-action" : ""} state-${state}`}
+			aria-label={code ? "Copy code block" : "Copy message"}
+			title={label}
+			onClick={() => void handleCopy()}
+		>
+			{label}
+		</button>
+	);
+}
+
+function reactNodeText(node: React.ReactNode): string {
+	if (typeof node === "string" || typeof node === "number") {
+		return String(node);
+	}
+	if (Array.isArray(node)) return node.map(reactNodeText).join("");
+	if (React.isValidElement(node)) {
+		const props = node.props as { children?: React.ReactNode };
+		return reactNodeText(props.children);
+	}
+	return "";
+}
+
+function CopyablePre({
+	children,
+}: {
+	children?: React.ReactNode;
+}): React.ReactElement {
+	const code = reactNodeText(children).replace(/\n$/, "");
+	return (
+		<div className="markdown-code-block">
+			{code && <CopyAction text={code} code />}
+			<pre>{children}</pre>
+		</div>
+	);
+}
+
 function TurnView({ turn }: { turn: Turn }): React.ReactElement | null {
 	if (turn.kind === "user") {
 		return (
 			<div className="turn user">
 				<div className="bubble">{turn.text}</div>
+				<div className="turn-actions">
+					<CopyAction text={turn.text} />
+				</div>
 			</div>
 		);
 	}
@@ -1272,9 +1638,19 @@ function TurnView({ turn }: { turn: Turn }): React.ReactElement | null {
 				)}
 				{turn.text && (
 					<div className="bubble markdown">
-						<ReactMarkdown remarkPlugins={[remarkGfm]}>
+						<ReactMarkdown
+							remarkPlugins={[remarkGfm]}
+							components={{ pre: CopyablePre }}
+						>
 							{turn.text}
 						</ReactMarkdown>
+					</div>
+				)}
+				{turn.text && (
+					<div className="turn-actions">
+						{/* Copy the source Markdown, not rendered innerText, so
+						    fenced code and structure survive the round-trip. */}
+						<CopyAction text={turn.text} />
 					</div>
 				)}
 			</div>

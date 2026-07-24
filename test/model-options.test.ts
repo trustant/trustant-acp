@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { SessionConfigOption } from "../src/types/session";
-import { managedModelChoices } from "../web/model-options";
+import {
+	managedModelChoices,
+	modelChoicesForAgent,
+} from "../web/model-options";
 
 describe("managed model choices", () => {
 	it.each([
@@ -43,5 +46,35 @@ describe("managed model choices", () => {
 			options: [{ value: "openai/o3", name: "openai/o3" }],
 		};
 		expect(managedModelChoices(option)).toEqual([]);
+	});
+
+	it("filters only managed Pi and preserves other ACP agent catalogs", () => {
+		const option: SessionConfigOption = {
+			type: "select",
+			id: "model",
+			category: "model",
+			name: "Model",
+			currentValue: "trustable/qwen",
+			options: [
+				{ value: "trustable/qwen", name: "Trustable Qwen" },
+				{ value: "openai/gpt-5", name: "OpenAI GPT-5" },
+			],
+		};
+
+		expect(
+			modelChoicesForAgent(option, "pi", true).map(
+				(choice) => choice.value,
+			),
+		).toEqual(["trustable/qwen"]);
+		expect(
+			modelChoicesForAgent(option, "codex", null).map(
+				(choice) => choice.value,
+			),
+		).toEqual(["trustable/qwen", "openai/gpt-5"]);
+		expect(
+			modelChoicesForAgent(option, "custom", false).map(
+				(choice) => choice.value,
+			),
+		).toEqual(["trustable/qwen", "openai/gpt-5"]);
 	});
 });

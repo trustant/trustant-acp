@@ -31,3 +31,20 @@ export function managedModelChoices(
 		option.value.startsWith(activePrefix),
 	);
 }
+
+/**
+ * Only Trustable-managed Pi needs provider-prefix filtering. Codex, Claude,
+ * standalone Pi, and custom ACP agents must retain the complete model catalog
+ * they advertised; applying Pi's filter globally hides their selectors.
+ */
+export function modelChoicesForAgent(
+	modelOption: SessionConfigOption | null,
+	agentId: string,
+	piManaged: boolean | null,
+): SessionConfigSelectOption[] {
+	if (!modelOption || modelOption.type !== "select") return [];
+	if (agentId === "pi" && piManaged === true) {
+		return managedModelChoices(modelOption);
+	}
+	return flattenConfigSelectOptions(modelOption.options);
+}

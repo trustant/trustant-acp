@@ -493,6 +493,16 @@ The chat UI connects to a default agent and lets the user switch:
   the modal, and removes the row only after Pi and TruACP metadata deletion both
   succeed. The current session cannot be deleted until another session is
   created or loaded.
+- The standalone composer recalls user prompts from the current or restored
+  session with `ArrowUp`/`ArrowDown`. It preserves the unfinished draft and
+  does not intercept selection, IME/modifier input, or ordinary multiline
+  cursor movement.
+- Transcript text remains selectable. User and assistant turns expose a copy
+  action, and rendered code blocks expose their own copy action. Message copy
+  uses the original Markdown; the browser uses `navigator.clipboard` when
+  available and a click-triggered fallback on Trustable's HTTP `*.nip.io`
+  development route. Success and failure are visible instead of silently
+  swallowing clipboard errors.
 
 ### Trustable Pi ACP extensions
 
@@ -518,10 +528,11 @@ Each agent is configured/authenticated through its **own native mechanism** (its
 login CLI or config file) — there is no side-store; the server just drives those.
 Configuration is surfaced **automatically on agent select** (standalone pi
 probes `/models` and pops a form on failure; codex/claude check login and pop the
-auth flow) and can be re-triggered anytime via a **⚙️ gear** in the header. In a
+auth flow) and can be re-triggered via a **⚙️ gear** in the header. In a
 Trustable-managed runtime (`TRUSTABLE_MANAGED_RUNTIME=1`), Pi configuration is
-owned by Trustable: failures and the gear direct the user to Trustable's main
-Configure screen instead of opening the standalone credential form.
+owned by Trustable, so the redundant Pi gear is hidden and failures direct the
+user to Trustable's main Configure screen. Standalone Pi keeps its gear, while
+Codex and Claude keep their login-renewal gears.
 
 **Pi — try-then-ask, written to pi's native config.** Pi has no headless auth
 CLI, and it does *not* honor `OPENAI_BASE_URL` (verified: it always hits
@@ -573,6 +584,45 @@ and refreshed on `config_option_update`. Changing it calls
 `setSessionConfigOption(model, value)`. This is the standard ACP channel, so it
 works for any agent that exposes model options (claude: Opus/Sonnet/Haiku; others
 after their endpoint/login is configured).
+
+**Reasoning effort selector.** After the session advertises `configOptions`, the
+header also shows a managed **Reasoning effort** selector for any agent exposing
+a `select` option with ACP category `thought_level`. The category is
+authoritative; `thought_level` (Pi), `reasoning_effort` (Codex), and `effort`
+(Claude) are accepted compatibility ids. The managed UI deliberately exposes
+only **High** (`high`) and **Extra high** (`xhigh`), defaults to `high` when no
+valid per-agent value was saved, and sends the selected value through the
+option's real id with `setSessionConfigOption`. `xhigh` is shown only when the
+active agent/model advertises it: TruACP never reports Extra high while silently
+downgrading the agent. A model change immediately re-evaluates the option because
+reasoning capabilities are model-specific. New, loaded, resumed, and reconnected
+sessions restore the last valid effort separately for each agent; values never
+leak between Pi, Codex, Claude, or a custom agent. Like other configuration
+controls, the selector is disabled during an active turn.
+
+The owned Pi adapter derives its `thought_level` choices from Pi's active model
+metadata rather than publishing a fixed list. A model with `reasoning !== true`
+offers only `off`. A reasoning model supports the standard levels through
+`high` unless a `thinkingLevelMap` entry explicitly disables one; extended
+`xhigh` is advertised only when `thinkingLevelMap.xhigh` exists and is
+non-null. This keeps the ACP response aligned with Pi's real clamping behavior
+and prevents the managed default from producing a false compatibility error.
+
+**Managed write mode for Codex and Claude.** Before the first prompt can be sent
+after selecting, creating, loading, resuming, or reconnecting one of these
+agents, TruACP applies and verifies the write-capable mode advertised through
+ACP `configOptions`: Codex uses `agent` (the Codex adapter's workspace-write
+mode) and Claude uses `acceptEdits`. This removes permission prompts for
+ordinary create/edit/delete operations inside the session cwd/workbench. TruACP
+resolves the real mode
+option by ACP category/id and must surface a compatibility error instead of
+silently continuing in read-only/manual mode when the required value is absent.
+The managed policy does not select Codex `agent-full-access`, Claude
+`bypassPermissions`, or global `permissions.autoAllow=true`: those choices are
+broader than workbench writes and could approve unrelated permission classes.
+Workspace boundaries, privilege escalation, and operations outside the
+workbench remain governed by deterministic policy. Custom agents keep their
+advertised/default permission behavior.
 
 For Pi, Trustable owns the provider boundary. The active provider is `trustable`
 for the Trustable status catalog, `ollama` for embedded/status-backed Ollama,
@@ -657,6 +707,13 @@ that today only reads config): `setProjectDir(dir)` updates the field consulted 
 - Delete an inactive session from the list, confirm it disappears after
   confirmation and does not return after reopening the modal. Verify the active
   session delete control is disabled.
+- For Pi, Codex, and Claude, verify the reasoning selector exposes only the
+  advertised subset of `high`/`xhigh`, persists independently per agent, and
+  sends the real adapter config id. Change model and confirm the choices are
+  reconciled without a silent downgrade.
+- For Codex, verify session readiness applies `agent`/workspace-write; for Claude,
+  verify it applies `acceptEdits`. Normal workbench file changes must not create
+  a permission prompt, while neither agent enters full-access/bypass mode.
 
 New REST endpoints: `GET /api/directory`, `POST /api/directory`.
 
