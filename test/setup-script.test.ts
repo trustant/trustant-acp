@@ -45,6 +45,25 @@ describe("setup.sh Trustable Pi forks", () => {
 		expect(setup).toContain(
 			'"$PI_PACKAGE_DIR"/earendil-works-pi-coding-agent-*.tgz',
 		);
+		expect(setup).toContain(
+			'PI_MCP_ADAPTER_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/npm/node_modules/pi-mcp-adapter"',
+		);
+		expect(setup).toContain(
+			"/Session not found for MCP Streamable HTTP transport/i",
+		);
+		expect(setup).toContain("async callToolWithSessionRecovery(");
+		expect(setup).toContain(
+			"state.manager.callToolWithSessionRecovery(serverName, {",
+		);
+		expect(setup).toContain(
+			"state.manager.callToolWithSessionRecovery(spec.serverName, {",
+		);
+		expect(setup).toContain(
+			"options.manager.callToolWithSessionRecovery(options.serverName, {",
+		);
+		expect(setup).toContain(
+			"this is the single allowed retry",
+		);
 		expect(piLocalRelease).toContain(
 			'{ directory: "packages/storage/sqlite-node", name: "@earendil-works/pi-storage-sqlite-node" }',
 		);

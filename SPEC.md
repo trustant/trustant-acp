@@ -392,6 +392,12 @@ The agents and their adapters:
     (OpenAI, Brave, Parallel, Tavily, Exa, Perplexity, or Gemini), so it needs that
     provider's key configured in Pi before the web tools work — `setup.sh` installs
     the package but configures no credentials (see the API-keys bullet below).
+- The pinned `pi-mcp-adapter@2.11.0` is patched deterministically after
+  registration. A Streamable HTTP `Session not found` response closes only the
+  stale connection, reconnects to refresh tools/resources, and retries the
+  original tool call exactly once. Proxy, direct-tool, and MCP UI paths use the
+  same manager recovery. Setup validates the exact version and every source
+  target before writing, remains idempotent, and fails closed on source drift.
 - `@zed-industries/codex-acp` is deprecated; config and this script use the
   maintained `@agentclientprotocol/codex-acp` (same `codex-acp` bin, drop-in).
 - The script installs into npm's global prefix when writable, else falls back to a

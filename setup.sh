@@ -293,6 +293,172 @@ for pkg in $PI_EXTENSION_PACKAGES; do
 	fi
 done
 
+# pi-mcp-adapter 2.11.0 keeps a Streamable HTTP connection marked as connected
+# after a co-located MCP server restarts and rejects its expired session ID.
+# Apply the reviewed compatibility fix after every registration pass so an
+# existing VM receives it even when `pi install` correctly skips the pinned
+# package. The transform validates every source before writing any file and is
+# idempotent; a future package layout must be reviewed instead of being patched
+# partially.
+PI_MCP_ADAPTER_SPEC=""
+for pkg in $PI_EXTENSION_PACKAGES; do
+	case "$pkg" in
+	pi-mcp-adapter@*) PI_MCP_ADAPTER_SPEC="$pkg" ;;
+	esac
+done
+if [ -z "$PI_MCP_ADAPTER_SPEC" ]; then
+	echo "✗ pi.version does not contain a pinned pi-mcp-adapter package." >&2
+	exit 1
+fi
+
+PI_MCP_ADAPTER_VERSION=${PI_MCP_ADAPTER_SPEC##*@}
+PI_MCP_ADAPTER_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/npm/node_modules/pi-mcp-adapter"
+if [ ! -f "$PI_MCP_ADAPTER_DIR/package.json" ]; then
+	echo "✗ pi-mcp-adapter was registered but $PI_MCP_ADAPTER_DIR/package.json was not found." >&2
+	exit 1
+fi
+
+node - "$PI_MCP_ADAPTER_DIR" "$PI_MCP_ADAPTER_VERSION" <<'NODE'
+const {
+	readFileSync,
+	renameSync,
+	statSync,
+	writeFileSync,
+} = require("node:fs");
+const { join } = require("node:path");
+
+const [adapterDir, expectedVersion] = process.argv.slice(2);
+const packageJson = JSON.parse(
+	readFileSync(join(adapterDir, "package.json"), "utf8"),
+);
+if (packageJson.version !== expectedVersion) {
+	throw new Error(
+		`pi-mcp-adapter version mismatch: expected ${expectedVersion}, found ${packageJson.version}`,
+	);
+}
+
+const managerMethod = `  async callToolWithSessionRecovery(
+    name: string,
+    request: Parameters<Client["callTool"]>[0],
+    resultSchema: Parameters<Client["callTool"]>[1],
+    options: Parameters<Client["callTool"]>[2],
+  ) {
+    const connection = this.connections.get(name);
+    if (!connection || connection.status !== "connected") {
+      throw new Error(\`Server "\${name}" is not connected\`);
+    }
+
+    try {
+      return await connection.client.callTool(request, resultSchema, options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        !connection.definition.url ||
+        !/Session not found for MCP Streamable HTTP transport/i.test(message)
+      ) {
+        throw error;
+      }
+
+      let replacement = this.connections.get(name);
+      if (replacement === connection) {
+        await this.close(name);
+        replacement = undefined;
+      }
+      if (!replacement || replacement.status !== "connected") {
+        replacement = await this.connect(
+          name,
+          connection.definition,
+          options?.signal,
+        );
+      }
+
+      // Call the replacement client directly: this is the single allowed retry.
+      return await replacement.client.callTool(request, resultSchema, options);
+    }
+  }
+
+`;
+
+const transforms = [
+	{
+		file: "server-manager.ts",
+		marker: "  async callToolWithSessionRecovery(",
+		search:
+			"  async readResource(name: string, uri: string, signal?: AbortSignal): Promise<ReadResourceResult> {",
+		replacement:
+			managerMethod +
+			"  async readResource(name: string, uri: string, signal?: AbortSignal): Promise<ReadResourceResult> {",
+	},
+	{
+		file: "proxy-modes.ts",
+		marker:
+			"const resultPromise = state.manager.callToolWithSessionRecovery(serverName, {",
+		search: "const resultPromise = connection.client.callTool({",
+		replacement:
+			"const resultPromise = state.manager.callToolWithSessionRecovery(serverName, {",
+	},
+	{
+		file: "direct-tools.ts",
+		marker:
+			"const resultPromise = state.manager.callToolWithSessionRecovery(spec.serverName, {",
+		search: "const resultPromise = connection.client.callTool({",
+		replacement:
+			"const resultPromise = state.manager.callToolWithSessionRecovery(spec.serverName, {",
+	},
+	{
+		file: "ui-server.ts",
+		marker:
+			"const result = await options.manager.callToolWithSessionRecovery(options.serverName, {",
+		search: "const result = await connection.client.callTool({",
+		replacement:
+			"const result = await options.manager.callToolWithSessionRecovery(options.serverName, {",
+	},
+];
+
+const sources = transforms.map((transform) => {
+	const path = join(adapterDir, transform.file);
+	return {
+		...transform,
+		path,
+		source: readFileSync(path, "utf8"),
+	};
+});
+const applied = sources.map(({ marker, source }) => source.includes(marker));
+if (applied.every(Boolean)) {
+	console.log(
+		`pi-mcp-adapter ${expectedVersion} Streamable HTTP recovery already applied`,
+	);
+	process.exit(0);
+}
+if (applied.some(Boolean)) {
+	throw new Error(
+		`pi-mcp-adapter ${expectedVersion} recovery patch is only partially applied`,
+	);
+}
+
+const pending = sources.map(({ search, replacement, ...source }) => {
+	const count = source.source.split(search).length - 1;
+	if (count !== 1) {
+		throw new Error(
+			`pi-mcp-adapter ${expectedVersion}: expected one patch target in ${source.file}, found ${count}`,
+		);
+	}
+	return {
+		...source,
+		updated: source.source.replace(search, replacement),
+	};
+});
+
+for (const { path, updated } of pending) {
+	const temporary = `${path}.trustable-new`;
+	writeFileSync(temporary, updated, { mode: statSync(path).mode & 0o777 });
+	renameSync(temporary, path);
+}
+console.log(
+	`Applied pi-mcp-adapter ${expectedVersion} Streamable HTTP session recovery`,
+);
+NODE
+
 echo
 # Every spec is pinned, so the manifest is the record of what was installed;
 # querying the registry would report latest, not what actually landed.
