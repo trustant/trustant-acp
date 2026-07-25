@@ -1,5 +1,6 @@
 import { spawn, ChildProcess } from "child_process";
 import * as acp from "@agentclientprotocol/sdk";
+import { isAbsolute, relative, resolve } from "path";
 import { Platform } from "../utils/platform-shim";
 
 import type {
@@ -56,6 +57,59 @@ export interface AgentConfig {
 		secretId: string;
 		/** Environment variable name to inject the resolved value into */
 		envVarName: string;
+	};
+	/**
+	 * Host-validated Pi launch contract for a Trustable-managed session.
+	 *
+	 * WHY: keeping policy paths out of browser/configured argv prevents an ACP
+	 * request from injecting arbitrary Pi flags or escaping the selected
+	 * workbench.
+	 */
+	piLaunch?: {
+		version: 1;
+		workbench: string;
+		extensionPaths: string[];
+	};
+}
+
+function pathIsWithin(root: string, target: string): boolean {
+	const rel = relative(resolve(root), resolve(target));
+	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/**
+ * Build the typed Pi session metadata from a host-validated AgentConfig.
+ *
+ * Exported for contract tests. Standalone Pi retains discovery-only behavior;
+ * a managed config adds only separately typed extension paths accepted by the
+ * pinned pi-acp fork.
+ */
+export function buildPiSessionRequestMeta(
+	config: AgentConfig | null,
+	workingDirectory: string,
+): Record<string, unknown> {
+	if (config?.id !== "pi") return {};
+	if (
+		config.piLaunch &&
+		!pathIsWithin(config.piLaunch.workbench, workingDirectory)
+	) {
+		throw new Error(
+			`Trustable runtime blocked Pi session cwd outside the selected workbench: ${workingDirectory}`,
+		);
+	}
+	return {
+		_meta: {
+			trustable: {
+				piLaunch: {
+					version: config.piLaunch?.version ?? 1,
+					extensions: {
+						discover: true,
+						paths: config.piLaunch?.extensionPaths ?? [],
+					},
+					skills: { discover: true },
+				},
+			},
+		},
 	};
 }
 
@@ -487,21 +541,10 @@ export class AcpClient {
 	 * concatenated into the configured command line. Other ACP agents never see
 	 * this metadata and older pi-acp versions safely ignore it.
 	 */
-	private sessionRequestMeta(): Record<string, unknown> {
-		if (this.currentConfig?.id !== "pi") return {};
-		return {
-			_meta: {
-				trustable: {
-					piLaunch: {
-						version: 1,
-						extensions: {
-							discover: true,
-						},
-						skills: { discover: true },
-					},
-				},
-			},
-		};
+	private sessionRequestMeta(
+		workingDirectory: string,
+	): Record<string, unknown> {
+		return buildPiSessionRequestMeta(this.currentConfig, workingDirectory);
 	}
 
 	/**
@@ -516,7 +559,7 @@ export class AcpClient {
 			const response = await connection.agent.request("session/new", {
 				cwd: this.toSessionCwd(workingDirectory),
 				mcpServers: [],
-				...this.sessionRequestMeta(),
+				...this.sessionRequestMeta(workingDirectory),
 			});
 
 			this.logger.log(
@@ -965,7 +1008,7 @@ export class AcpClient {
 				sessionId,
 				cwd: this.toSessionCwd(cwd),
 				mcpServers: [],
-				...this.sessionRequestMeta(),
+				...this.sessionRequestMeta(cwd),
 			});
 
 			this.logger.log(`[AcpClient] Session loaded: ${sessionId}`);
@@ -1006,7 +1049,7 @@ export class AcpClient {
 				sessionId,
 				cwd: this.toSessionCwd(cwd),
 				mcpServers: [],
-				...this.sessionRequestMeta(),
+				...this.sessionRequestMeta(cwd),
 			});
 
 			this.logger.log(`[AcpClient] Session resumed: ${sessionId}`);
@@ -1041,7 +1084,7 @@ export class AcpClient {
 				sessionId,
 				cwd: this.toSessionCwd(cwd),
 				mcpServers: [],
-				...this.sessionRequestMeta(),
+				...this.sessionRequestMeta(cwd),
 			});
 
 			this.logger.log(

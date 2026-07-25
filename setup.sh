@@ -16,6 +16,7 @@
 # SELF-CONTAINED: this script needs no other file from the repo. Given just
 #
 #     setup.sh + pi.version + dist-bin/truacp.cjs + pi-acp-package.tgz
+#     + pi-packages/*.tgz + extensions/trustable-runtime.ts
 #
 # it installs a complete, working truacp into ~/.local/bin — no package.json, no
 # node_modules, no secondary installer, no network beyond npm for the agents.
@@ -152,6 +153,67 @@ echo
 # shellcheck disable=SC2086 # Both variables are deliberately word-split specs.
 npm install -g --force $PREFIX_ARGS $GLOBAL_PACKAGES
 
+# Install the exact nested Trustable Pi fork instead of resolving the coding
+# agent and core packages from npm. Source/VM mode builds the five lockstep
+# packages; image packaging supplies the same tarballs beside setup.sh.
+#
+# WHY: stream repetition can happen inside one provider response, below ACP and
+# extension hooks. Falling back to upstream would remove the only layer capable
+# of interrupting that loop while making setup appear successful.
+PI_SOURCE_DIR="$SCRIPT_DIR/pi"
+PI_PREBUILT_DIR="$SCRIPT_DIR/pi-packages"
+PI_BUILD_DIR=""
+PI_PACKAGE_DIR=""
+
+if [ -f "$PI_SOURCE_DIR/package.json" ]; then
+	if [ ! -f "$PI_SOURCE_DIR/package-lock.json" ]; then
+		echo "✗ nested Trustable Pi fork is missing package-lock.json." >&2
+		exit 1
+	fi
+	PI_BUILD_DIR=$(mktemp -d)
+	echo "Building nested Trustable Pi fork…"
+	(
+		cd "$PI_SOURCE_DIR"
+		# WHY: Pi's repository-level prepare hook configures Husky through Git
+		# metadata. A Lima/WSL setup consumes the mounted source tree but is not
+		# allowed to depend on the host worktree's private .git admin path.
+		npm ci --ignore-scripts
+		# WHY: Trustable builds must remain reproducible/offline and use the
+		# model catalogs reviewed in the pinned source revision.
+		PI_LOCAL_RELEASE_USE_CHECKED_IN_MODELS=1 node scripts/local-release.mjs \
+			--out "$PI_BUILD_DIR" \
+			--force \
+			--skip-check \
+			--skip-test \
+			--skip-install
+	)
+	PI_PACKAGE_DIR="$PI_BUILD_DIR/tarballs"
+elif [ -d "$PI_PREBUILT_DIR" ]; then
+	PI_PACKAGE_DIR="$PI_PREBUILT_DIR"
+else
+	echo "✗ Trustable Pi fork is unavailable." >&2
+	echo "  Initialize recursively or provide $PI_PREBUILT_DIR." >&2
+	exit 1
+fi
+
+set -- \
+	"$PI_PACKAGE_DIR"/earendil-works-pi-ai-*.tgz \
+	"$PI_PACKAGE_DIR"/earendil-works-pi-tui-*.tgz \
+	"$PI_PACKAGE_DIR"/earendil-works-pi-agent-core-*.tgz \
+	"$PI_PACKAGE_DIR"/earendil-works-pi-storage-sqlite-node-*.tgz \
+	"$PI_PACKAGE_DIR"/earendil-works-pi-coding-agent-*.tgz
+if [ "$#" -ne 5 ]; then
+	echo "✗ Trustable Pi build did not produce exactly five package archives." >&2
+	exit 1
+fi
+for package in "$@"; do
+	if [ ! -f "$package" ]; then
+		echo "✗ Trustable Pi package is missing: $package" >&2
+		exit 1
+	fi
+done
+npm install -g --force $PREFIX_ARGS "$@"
+
 # Install the exact nested Trustable fork instead of resolving upstream
 # pi-acp from npm. In source/VM mode setup builds a package from the checked-out
 # submodule; image packaging supplies the same tarball next to setup.sh.
@@ -201,6 +263,9 @@ fi
 if [ -n "$PI_ACP_BUILD_DIR" ]; then
 	rm -rf "$PI_ACP_BUILD_DIR"
 fi
+if [ -n "$PI_BUILD_DIR" ]; then
+	rm -rf "$PI_BUILD_DIR"
+fi
 
 # Resolve the Pi binary from the prefix just populated instead of assuming the
 # caller has already refreshed PATH. This is required in fresh VM/image builds.
@@ -232,7 +297,7 @@ echo
 # Every spec is pinned, so the manifest is the record of what was installed;
 # querying the registry would report latest, not what actually landed.
 PACKAGE_COUNT=$(printf '%s\n' "$PACKAGES" | grep -c '^')
-echo "✓ Provisioned $((PACKAGE_COUNT + 1)) pinned packages (including the Trustable pi-acp fork)."
+echo "✓ Provisioned $((PACKAGE_COUNT + 5)) pinned packages (including the Trustable Pi and pi-acp forks)."
 
 # ---------------------------------------------------------------------------
 # Phase 2 — build (only with a package.json in the current directory)
@@ -261,12 +326,12 @@ fi
 # Phase 3 — install into ~/.local
 # ---------------------------------------------------------------------------
 #
-# Self-contained: this phase consumes the five runtime artifacts named in the
+# Self-contained: this phase consumes the runtime artifacts named in the
 # header to install a complete, working truacp. Installation deliberately lives
 # only here so source, VM, and image builds all generate the same launchers from
 # the same implementation.
 #
-# The bundle is looked for next to the script first (the five-file layout), then
+# The bundle is looked for next to the script first (the packaged layout), then
 # in the current directory (running from a source checkout elsewhere).
 BUNDLE=""
 for candidate in \
@@ -288,11 +353,28 @@ fi
 
 LIB_DIR="$HOME/.local/lib/truacp"
 BIN_DIR="$HOME/.local/bin"
+TRUSTABLE_EXTENSION_SOURCE=""
+for candidate in \
+	"$SCRIPT_DIR/extensions/trustable-runtime.ts" \
+	"extensions/trustable-runtime.ts"; do
+	if [ -f "$candidate" ]; then
+		TRUSTABLE_EXTENSION_SOURCE="$candidate"
+		break
+	fi
+done
+if [ -z "$TRUSTABLE_EXTENSION_SOURCE" ]; then
+	echo "✗ Trustable Pi runtime extension is missing." >&2
+	exit 1
+fi
 
 echo
 echo "Installing truacp into $HOME/.local (from $BUNDLE) …"
-mkdir -p "$LIB_DIR" "$BIN_DIR"
+mkdir -p "$LIB_DIR/extensions" "$BIN_DIR"
 cp "$BUNDLE" "$LIB_DIR/truacp.cjs"
+# WHY: Pi receives this path through typed ACP metadata. Installing it beside
+# the bundle keeps VM and image runtimes identical and makes a missing policy
+# artifact a setup failure rather than an unguarded fallback.
+cp "$TRUSTABLE_EXTENSION_SOURCE" "$LIB_DIR/extensions/trustable-runtime.ts"
 
 # The launcher is a portable shell script, not a compiled binary: `node` is
 # resolved from PATH at run time, so the same bytes work on any architecture.
@@ -309,5 +391,6 @@ done
 
 echo "✓ Installed:"
 echo "    $LIB_DIR/truacp.cjs"
+echo "    $LIB_DIR/extensions/trustable-runtime.ts"
 echo "    $BIN_DIR/truacp"
 echo "    $BIN_DIR/trustable-acp"

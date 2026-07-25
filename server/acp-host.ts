@@ -13,6 +13,7 @@ import {
 	type StandaloneConfig,
 	resolveProjectDir,
 } from "./config-store";
+import { resolveManagedPiRuntime } from "./managed-runtime";
 
 /**
  * Build the runtime the ACP layer needs from the loaded config.
@@ -67,6 +68,20 @@ export function buildAgentConfig(
 			secretId: agent.apiKeyEnvVar,
 			envVarName: agent.apiKeyEnvVar,
 		};
+	}
+
+	if (agent.id === "pi") {
+		const managed = resolveManagedPiRuntime(workingDirectory);
+		if (managed) {
+			// WHY: only the server can turn the host-owned manifest into the
+			// typed piLaunch contract. The browser and config.json cannot supply
+			// extension paths or relax the selected workbench.
+			base.piLaunch = {
+				version: 1,
+				workbench: managed.workbench.workspace,
+				extensionPaths: [managed.extensionPath],
+			};
+		}
 	}
 
 	return base;

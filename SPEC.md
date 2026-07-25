@@ -327,8 +327,9 @@ ordered phases:
 
 1. **Install components** — the supported CLIs and upstream ACP adapters
    globally via npm, register Pi extensions through `pi install`, and build or
-   install the pinned nested Trustable `pi-acp` fork. npm package pins live in
-   `pi.version`; the fork revision is pinned by the nested Git submodule.
+   install the pinned nested Trustable `pi` and `pi-acp` forks. npm extension
+   pins live in `pi.version`; fork revisions are pinned by nested Git
+   submodules.
 2. **Build** — *only if a `package.json` exists in the current directory*:
    `dist-web/` (web UI) and `dist-bin/truacp.cjs` (server bundle).
 3. **Install** — the bundle into `~/.local/lib/truacp` plus the launcher scripts
@@ -342,6 +343,7 @@ so any failing step aborts it.
 
 ```
 setup.sh + pi.version + dist-bin/truacp.cjs + pi-acp-package.tgz
+pi-packages/*.tgz + extensions/trustable-runtime.ts
 ```
 
 it installs a complete, working truacp into `~/.local/bin` — no `package.json`,
@@ -374,7 +376,7 @@ The agents and their adapters:
 |---|---|---|
 | Claude Code | `@anthropic-ai/claude-code` (`claude`) | `@agentclientprotocol/claude-agent-acp` |
 | Codex | `@openai/codex` (`codex`) | `@agentclientprotocol/codex-acp` |
-| Pi | `@earendil-works/pi-coding-agent` (`pi`) | `pi-acp` |
+| Pi | nested `trustable-ai/pi` fork (`pi`) | nested `pi-acp` fork |
 
 - The adapters are what `config.json` spawns via `npx -y <adapter>`; a global install
   makes launches instant/offline. The CLIs are the binaries the adapters exec.
@@ -400,6 +402,21 @@ The agents and their adapters:
   versioned launch/activity metadata, includes extension commands, and bounds
   abort requests. `setup.sh` never falls back to the public npm adapter because
   that would silently remove those capabilities.
+- The Pi CLI, agent core, AI, TUI, and SQLite session-storage packages come from the nested
+  `trustable-ai/pi` fork at the pinned upstream-compatible version. Source/VM
+  mode builds all five tarballs; image mode consumes those exact artifacts.
+  Installing the public coding-agent package is forbidden because stream-loop
+  protection lives below ACP in the owned core.
+- The Trustable local-release build compiles the checked-in Pi model catalogs.
+  It does not refresh them from models.dev, OpenRouter, NVIDIA, or other live
+  catalogs while packaging an unchanged commit. Catalog refresh remains an
+  explicit upstream/release-maintenance action, so VM and image builds are
+  deterministic and cannot acquire an incompatible provider schema mid-build.
+- Source/VM and image packaging hydrate the nested Pi fork with `npm ci
+  --ignore-scripts`. The explicit local-release command owns its build; repository
+  lifecycle hooks such as Husky are not runtime prerequisites and may otherwise
+  follow a worktree `.git` pointer into host-only Git administration paths that
+  are deliberately unavailable inside Lima, WSL, or an image builder.
 - API keys are not handled here — set them in `.env` (`ANTHROPIC_API_KEY`,
   `OPENAI_API_KEY`, `PI_API_KEY`; see `.env.example`).
 - After running it, **restart the server** so the newly-installed binaries are on
@@ -421,7 +438,6 @@ and blank lines are ignored:
 @agentclientprotocol/claude-agent-acp@0.60.0
 @openai/codex@0.144.6
 @agentclientprotocol/codex-acp@1.1.4
-@earendil-works/pi-coding-agent@0.80.10
 pi-mcp-adapter@2.11.0
 pi-web-access@0.13.0
 ```
@@ -513,9 +529,70 @@ skill, prompt-template, and session-directory fields into discrete arguments.
 Other ACP agents never receive this metadata.
 
 The typed contract is the transport for extensions selected by a trusted
-server-side configuration. Issue #58 does not install a Trustable execution
-policy or credential guardrail: that policy, its ownership, and its acceptance
-tests belong to issue #57. Browser requests cannot inject extension paths.
+server-side configuration. Browser requests cannot inject extension paths.
+
+In a Trustable-managed runtime, issue #57 adds a versioned host contract.
+TruACP reads `TRUSTABLE_RUNTIME_CONFIG`, validates its canonical workbench,
+exact generated `.mcp.json`, local development URL, browser-visible application
+URL, private watcher log, and the extension selected by
+`TRUSTABLE_PI_EXTENSION_PATH`, then includes
+only that validated path in `piLaunch.extensions.paths`. The manifest uses the
+version-2 `workbenches` envelope shared with Browser MCP. Managed mode fails
+closed if the contract is absent, malformed, stale, or does not cover the
+requested session cwd.
+Standalone TruACP retains normal Pi discovery without requiring this manifest.
+
+`setup.sh` installs the self-contained extension at
+`~/.local/lib/truacp/extensions/trustable-runtime.ts`. The extension
+revalidates the contract inside Pi, injects the host context before each turn,
+blocks `write`/`edit` outside the selected workbench, and registers the
+read-only `trustable_runtime_status` tool. The tool returns a bounded, redacted
+tail of the host-owned `ops ide devel` log, so deployment diagnosis uses
+evidence instead of guessed paths or process polling. In managed live mode the
+extension also rejects shell inspection/polling of `packages/**/*.zip`, masked
+checker pipelines, and a second checker call without an intervening source or
+OpenServerless-wiring mutation.
+
+The same managed extension treats target-workbench `.env` and
+`.env.production` as immutable: Pi cannot read, write, edit, or inspect them
+through shell, and the environment-mutating `secret_ensure` MCP call is
+rejected. Only the enclosing Trustable configuration UI owns application env
+values. The corrected OpenServerless `auth_setup` remains available because it
+atomically adds Redis wiring to the complete token/protected/logout endpoint
+set without reading or writing `.env`. The host prompt requires Redis-backed
+opaque sessions for generated application authentication and deterministic
+`react_validate` after frontend mutations before Browser MCP calls.
+
+The extension rejects direct writes to generated `packages/**/__main__.py`
+wrappers and `packages/**/*.zip` deploy artifacts. It also rejects mutating
+service-MCP operations such as PostgreSQL `execute_sql`, while retaining
+read-only service discovery and verification. Schema, migration, seed, and app
+writes must therefore remain reproducible in setup or public OpenServerless
+actions instead of repairing only the live service state.
+
+The nested Pi fork detects repeated normalized prose inside one streamed
+provider response. It aborts that pathological response below ACP. It does not
+impose a provider-step or turn budget; healthy runs exceeding 300 turns remain
+valid.
+
+The managed extension normalizes the real `pi-mcp-adapter` proxy contract,
+including full tool names such as `openserverless_action_new`, JSON-string
+`args`, and both server-discovery shapes: `mcp({server:"..."})` and
+`mcp({connect:"..."})`. Before application work it requires proof that the MCP
+proxy is reachable and successful discovery for every server named by the
+managed manifest. A successful `connect` supplies both proxy-reachability
+evidence and discovery evidence for that server; the compatible
+`mcp({})` plus per-server `server` sequence remains valid. It blocks raw
+action/service administration, direct service clients,
+manual action scaffold/wrapper generation, ad-hoc dependency installation,
+service-MCP writes, shell-based `src/`/`packages/` writes, destructive Git
+recovery, and piecemeal Redis wiring for authentication endpoints.
+Only successful tool results advance bootstrap, checker, React-validation, and
+source-revision state. After three semantically equivalent failures without a
+successful relevant source or OpenServerless-wiring mutation, the same strategy
+is rejected until the model changes its hypothesis/inputs or makes real
+progress. Durable workflow recovery and completion evidence remain later issue
+#57 increments.
 
 The fork reports `_meta.piAcp.activity` version 1 on `session_info_update`.
 `thinking`, `responding`, tool-specific states, `retrying`, `compacting`,
@@ -607,6 +684,25 @@ offers only `off`. A reasoning model supports the standard levels through
 `xhigh` is advertised only when `thinkingLevelMap.xhigh` exists and is
 non-null. This keeps the ACP response aligned with Pi's real clamping behavior
 and prevents the managed default from producing a false compatibility error.
+
+**Managed deployment ownership.** When Trustable supplies the versioned runtime
+manifest, its Pi extension states that the existing `ops ide devel` watcher is
+the sole owner of live action packaging/deployment. The extension rejects Pi
+`bash`/`shell` calls whose executable segment starts `ops ide deploy` or
+`ops ide devel`, including `timeout ... ops ide deploy` after `cd`, while
+allowing read-only commands that merely search for that text. This narrow
+deterministic guard prevents concurrent deploy processes and timeout-escalation
+loops. The same guard rejects direct shell access to watcher-owned action ZIPs,
+checker output masking, and repeated checker calls for an unchanged revision.
+After one or more successful OpenServerless `action_new` creations, Pi finishes
+the coherent action/wiring/source batch and calls the extension-owned
+`trustable_runtime_redeploy` tool exactly once. That tool invokes the co-located
+Trustable `/api/redeploy` SSE workflow used by the UI, which safely stops the
+watcher, runs the full deploy, and restarts the watcher. Until it succeeds, the
+extension blocks watcher status, checker, HTTP, and browser verification while
+still allowing the coherent batch to finish. A compatible idempotent
+`action_new` no-op does not require redeploy. Pi then reads watcher status, runs
+one source-contract checker pass, and verifies real HTTP endpoints.
 
 **Managed autonomous mode for Codex and Claude.** Before the first prompt can be
 sent after selecting, creating, loading, resuming, or reconnecting one of these
