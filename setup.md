@@ -68,6 +68,15 @@ fetching, repo cloning, and PDF/video extraction. `pi-web-access` needs a search
 provider key (OpenAI, Brave, Tavily, Exa, …) configured in Pi before its tools
 work — this script installs the package but sets no credentials.
 
+The pinned `pi-mcp-adapter@2.11.0` receives one reviewed, version-guarded
+compatibility transform after registration. When a co-located Streamable HTTP
+MCP server such as Agentic React restarts, the adapter closes the connection
+holding the rejected session ID, creates a replacement connection (which
+refreshes tools and resources), and retries the original tool call exactly
+once. Proxy calls, direct tools, and MCP UI proxy calls share this manager path.
+The transform is idempotent, validates every expected source before writing,
+and fails setup if the installed version or source layout differs.
+
 For Codex, `@zed-industries/codex-acp` is deprecated in favour of the
 `@agentclientprotocol` scope.
 
@@ -106,7 +115,9 @@ the resolved versions. Install goes into npm's global prefix when
 (bins land in `~/.local/bin`) so `npm install -g` never needs `sudo`. It warns
 when `~/.local/bin` is not already on PATH. A single `npm install -g --force`
 covers CLI and ACP packages. Pi extensions are skipped when the exact pinned
-source is already present in `pi list`, keeping re-runs idempotent.
+source is already present in `pi list`, keeping re-runs idempotent; the
+compatibility transform is still checked and applied so existing VMs receive
+the recovery fix.
 
 `pi-acp@0.0.31` performs an update lookup independently from Pi and does not
 honor Pi's `PI_SKIP_VERSION_CHECK` or `PI_OFFLINE` flags. Immediately after the

@@ -1,0 +1,144 @@
+import { mkdir, writeFile } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
+import { describe, expect, it } from "vitest";
+import { resolveManagedPiRuntime } from "../server/managed-runtime";
+import { buildPiSessionRequestMeta } from "../src/acp/acp-client";
+
+async function managedFixture(root: string) {
+	const workbench = join(root, "workbench", "example");
+	const extensionPath = join(root, "runtime", "trustable-runtime.ts");
+	const manifestPath = join(root, "runtime", "pi-runtime.json");
+	const watcherLog = join(root, "runtime", "ops-ide-devel.log");
+	await mkdir(workbench, { recursive: true });
+	await mkdir(join(root, "runtime"), { recursive: true });
+	await writeFile(extensionPath, "export default function () {}\n");
+	await writeFile(watcherLog, "watcher ready\n", { mode: 0o600 });
+	await writeFile(
+		join(workbench, ".mcp.json"),
+		JSON.stringify({
+			mcpServers: {
+				browser: { command: "browser" },
+				openserverless: { command: "openserverless" },
+			},
+		}),
+	);
+	await writeFile(
+		manifestPath,
+		JSON.stringify({
+			version: 2,
+			workbenches: [
+				{
+					app: "example",
+					workspace: workbench,
+					developmentUrl: "http://localhost:5173",
+					browserUrl: "http://vite.example.test:8910",
+					requiredMcpServers: ["openserverless", "browser"],
+					watcherLog,
+				},
+			],
+		}),
+	);
+	return { workbench, extensionPath, manifestPath, watcherLog };
+}
+
+describe("Trustable managed Pi runtime", () => {
+	it("leaves standalone TruACP unchanged", () => {
+		expect(
+			resolveManagedPiRuntime(process.cwd(), {
+				TRUSTABLE_MANAGED_RUNTIME: "0",
+			}),
+		).toBeUndefined();
+	});
+
+	it("validates the manifest, MCP contract, workbench, and extension", async () => {
+		const root = await import("fs/promises").then(({ mkdtemp }) =>
+			mkdtemp(join(tmpdir(), "managed-runtime-")),
+		);
+		const fixture = await managedFixture(root);
+		const result = resolveManagedPiRuntime(fixture.workbench, {
+			TRUSTABLE_MANAGED_RUNTIME: "1",
+			TRUSTABLE_RUNTIME_CONFIG: fixture.manifestPath,
+			TRUSTABLE_PI_EXTENSION_PATH: fixture.extensionPath,
+		});
+
+		expect(result?.workbench).toMatchObject({
+			app: "example",
+			workspace: fixture.workbench,
+			developmentUrl: "http://localhost:5173",
+			browserUrl: "http://vite.example.test:8910",
+			requiredMcpServers: ["browser", "openserverless"],
+			watcherLog: fixture.watcherLog,
+		});
+		expect(result?.extensionPath).toBe(fixture.extensionPath);
+	});
+
+	it("fails closed for a cwd outside the selected workbench", async () => {
+		const { mkdtemp } = await import("fs/promises");
+		const root = await mkdtemp(join(tmpdir(), "managed-runtime-"));
+		const fixture = await managedFixture(root);
+		const other = join(root, "other");
+		await mkdir(other);
+
+		expect(() =>
+			resolveManagedPiRuntime(other, {
+				TRUSTABLE_MANAGED_RUNTIME: "1",
+				TRUSTABLE_RUNTIME_CONFIG: fixture.manifestPath,
+				TRUSTABLE_PI_EXTENSION_PATH: fixture.extensionPath,
+			}),
+		).toThrow("expected one workbench");
+	});
+
+	it("fails closed when a declared MCP server is absent", async () => {
+		const { mkdtemp } = await import("fs/promises");
+		const root = await mkdtemp(join(tmpdir(), "managed-runtime-"));
+		const fixture = await managedFixture(root);
+		await writeFile(
+			join(fixture.workbench, ".mcp.json"),
+			JSON.stringify({ mcpServers: { browser: {} } }),
+		);
+
+		expect(() =>
+			resolveManagedPiRuntime(fixture.workbench, {
+				TRUSTABLE_MANAGED_RUNTIME: "1",
+				TRUSTABLE_RUNTIME_CONFIG: fixture.manifestPath,
+				TRUSTABLE_PI_EXTENSION_PATH: fixture.extensionPath,
+			}),
+		).toThrow("missing required servers: openserverless");
+	});
+
+	it("passes only typed extension paths and rejects session cwd escape", () => {
+		const config = {
+			id: "pi",
+			displayName: "Pi",
+			command: "pi-acp",
+			args: [],
+			workingDirectory: "/workbench/example",
+			piLaunch: {
+				version: 1 as const,
+				workbench: "/workbench/example",
+				extensionPaths: ["/runtime/trustable-runtime.ts"],
+			},
+		};
+
+		expect(
+			buildPiSessionRequestMeta(config, "/workbench/example/src"),
+		).toEqual({
+			_meta: {
+				trustable: {
+					piLaunch: {
+						version: 1,
+						extensions: {
+							discover: true,
+							paths: ["/runtime/trustable-runtime.ts"],
+						},
+						skills: { discover: true },
+					},
+				},
+			},
+		});
+		expect(() =>
+			buildPiSessionRequestMeta(config, "/workbench/other"),
+		).toThrow("outside the selected workbench");
+	});
+});
