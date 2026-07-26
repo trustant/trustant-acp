@@ -31,6 +31,8 @@ import {
 } from "./claude-login";
 import { statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
+import { NotebookGitHubService } from "./notebook-github";
+import { executeShellCommand } from "./shell-executor";
 import type {
 	AgentsResponse,
 	DirectoryRequest,
@@ -41,6 +43,7 @@ import type {
 	SessionResponse,
 	PromptRequest,
 	CancelRequest,
+	ShellRequest,
 	SessionByIdRequest,
 	ConfigOptionRequest,
 	ConfigOptionResponse,
@@ -50,6 +53,17 @@ import type {
 	SavedSessionsResponse,
 	SavedMessagesResponse,
 	SaveMessagesRequest,
+	NotebookSourceRequest,
+	NotebookLoadRequest,
+	NotebookSaveRequest,
+	NotebookAddRequest,
+	NotebookRemoveRequest,
+	NotebookSessionRequest,
+	SaveNotebookSessionRequest,
+	NotebookIndexResponse,
+	NotebookDocumentResponse,
+	NotebookMutationResponse,
+	NotebookSessionResponse,
 } from "./protocol";
 
 export interface RouteContext {
@@ -57,6 +71,8 @@ export interface RouteContext {
 	store: SessionStore;
 	config: StandaloneConfig;
 }
+
+const notebookGitHub = new NotebookGitHubService();
 
 export const routes = {
 	"GET /api/agents": (ctx: RouteContext): AgentsResponse => ({
@@ -111,6 +127,7 @@ export const routes = {
 		const client = ctx.host.requireClient(body.agentId);
 		const cwd = body.cwd ?? ctx.host.projectDir();
 		const result = await client.newSession(cwd);
+		ctx.host.bindSessionDirectory(result.sessionId, cwd);
 		await ctx.store.saveSession({
 			sessionId: result.sessionId,
 			agentId: body.agentId,
@@ -139,13 +156,25 @@ export const routes = {
 		return { ok: true };
 	},
 
+	"POST /api/session/shell": async (
+		ctx: RouteContext,
+		body: ShellRequest,
+	) => {
+		// WHY: cwd is host-owned session state, not request data. This prevents
+		// the browser from turning shell mode into an arbitrary-directory API.
+		const cwd = ctx.host.activeSessionDirectory(body.sessionId);
+		return executeShellCommand({ command: body.command, cwd });
+	},
+
 	"POST /api/session/load": async (
 		ctx: RouteContext,
 		body: SessionByIdRequest,
 	): Promise<SessionResponse> => {
 		const client = ctx.host.requireClient(body.agentId);
 		const cwd = body.cwd ?? ctx.host.projectDir();
-		return { result: await client.loadSession(body.sessionId, cwd) };
+		const result = await client.loadSession(body.sessionId, cwd);
+		ctx.host.bindSessionDirectory(result.sessionId, cwd);
+		return { result };
 	},
 
 	"POST /api/session/resume": async (
@@ -154,7 +183,9 @@ export const routes = {
 	): Promise<SessionResponse> => {
 		const client = ctx.host.requireClient(body.agentId);
 		const cwd = body.cwd ?? ctx.host.projectDir();
-		return { result: await client.resumeSession(body.sessionId, cwd) };
+		const result = await client.resumeSession(body.sessionId, cwd);
+		ctx.host.bindSessionDirectory(result.sessionId, cwd);
+		return { result };
 	},
 
 	"POST /api/session/fork": async (
@@ -163,7 +194,17 @@ export const routes = {
 	): Promise<SessionResponse> => {
 		const client = ctx.host.requireClient(body.agentId);
 		const cwd = body.cwd ?? ctx.host.projectDir();
-		return { result: await client.forkSession(body.sessionId, cwd) };
+		const result = await client.forkSession(body.sessionId, cwd);
+		await ctx.store.saveSession({
+			sessionId: result.sessionId,
+			agentId: body.agentId,
+			cwd,
+			createdAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+		});
+		await ctx.store.cloneNotebookState(body.sessionId, result.sessionId);
+		ctx.host.bindSessionDirectory(result.sessionId, cwd);
+		return { result };
 	},
 
 	"POST /api/session/config-option": async (
@@ -240,6 +281,53 @@ export const routes = {
 		await ctx.store.deleteSession(body.sessionId);
 		return { ok: true };
 	},
+
+	"POST /api/sessions/notebook/get": async (
+		ctx: RouteContext,
+		body: NotebookSessionRequest,
+	): Promise<NotebookSessionResponse> => ({
+		state: await ctx.store.loadNotebookState(body.sessionId),
+	}),
+
+	"PUT /api/sessions/notebook": async (
+		ctx: RouteContext,
+		body: SaveNotebookSessionRequest,
+	): Promise<{ ok: true }> => {
+		await ctx.store.saveNotebookState(body.sessionId, body.state);
+		return { ok: true };
+	},
+
+	// ---- GitHub-backed notebooks ------------------------------------------
+
+	"POST /api/notebooks/index": async (
+		_ctx: RouteContext,
+		body: NotebookSourceRequest,
+	): Promise<NotebookIndexResponse> =>
+		notebookGitHub.readIndex(body.repository, body.ref),
+
+	"POST /api/notebooks/load": async (
+		_ctx: RouteContext,
+		body: NotebookLoadRequest,
+	): Promise<NotebookDocumentResponse> =>
+		notebookGitHub.loadNotebook(body),
+
+	"PUT /api/notebooks/save": async (
+		_ctx: RouteContext,
+		body: NotebookSaveRequest,
+	): Promise<{ sha: string; hasToken: boolean }> =>
+		notebookGitHub.saveNotebook(body),
+
+	"POST /api/notebooks/add": async (
+		_ctx: RouteContext,
+		body: NotebookAddRequest,
+	): Promise<NotebookMutationResponse> =>
+		notebookGitHub.addNotebook(body),
+
+	"POST /api/notebooks/remove": async (
+		_ctx: RouteContext,
+		body: NotebookRemoveRequest,
+	): Promise<NotebookMutationResponse> =>
+		notebookGitHub.removeNotebook(body),
 
 	// ---- pi provider config (native ~/.pi/agent/models.json) --------------
 	// OpenCode endpoint routes are intentionally absent: Pi is the managed

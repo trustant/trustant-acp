@@ -35,6 +35,27 @@ import {
 	writeReasoningPreference,
 	type ManagedReasoningEffort,
 } from "./session-config";
+import type {
+	NotebookIndexEntry,
+	NotebookIndexResponse,
+	NotebookNode,
+	NotebookSessionState,
+} from "../src/types/notebook";
+import {
+	advanceNotebookSelection,
+	insertAdHocNode,
+	notebookPromptsForSave,
+	pinNotebookNode,
+	removeNotebookNode,
+} from "../src/services/notebook";
+import { NotebookPanel } from "./NotebookPanel";
+import { NotebookNodeView } from "./NotebookNodeView";
+import {
+	classifyComposerSubmission,
+	formatShellFailure,
+	formatShellResult,
+	READY_COMPOSER_PLACEHOLDER,
+} from "./shell-command";
 
 // ---- view model -----------------------------------------------------------
 
@@ -55,7 +76,12 @@ interface ToolTurn {
 	title: string;
 	status: string;
 }
-type Turn = UserTurn | AssistantTurn | ToolTurn;
+interface ShellTurn {
+	kind: "shell";
+	id: string;
+	text: string;
+}
+type Turn = UserTurn | AssistantTurn | ToolTurn | ShellTurn;
 
 interface PendingPermission {
 	requestId: string;
@@ -117,6 +143,22 @@ function browserPreferenceStorage(): Storage | null {
 	}
 }
 
+let localId = 0;
+
+function nextId(prefix: string): string {
+	localId += 1;
+	return `${prefix}-${Date.now()}-${localId}`;
+}
+
+function nodesFromPrompts(prompts: string[]): NotebookNode[] {
+	return prompts.map((prompt) => ({
+		id: nextId("notebook"),
+		kind: "notebook",
+		prompt,
+		outputs: [],
+	}));
+}
+
 export function ChatApp(): React.ReactElement {
 	const [agents, setAgents] = useState<AgentInfo[]>([]);
 	const [agentId, setAgentId] = useState<string>("");
@@ -125,6 +167,7 @@ export function ChatApp(): React.ReactElement {
 	const [ready, setReady] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [running, setRunning] = useState(false);
+	const [shellRunning, setShellRunning] = useState(false);
 	const [stopping, setStopping] = useState(false);
 	const [activity, setActivity] = useState<ActivityState | null>(null);
 	const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -145,6 +188,18 @@ export function ChatApp(): React.ReactElement {
 		null,
 	);
 	const [historyError, setHistoryError] = useState<string | null>(null);
+	const [notebookPanelOpen, setNotebookPanelOpen] = useState(false);
+	const [notebookSource, setNotebookSource] = useState(
+		"trustable-ai/notebooks",
+	);
+	const [notebookRef, setNotebookRef] = useState("main");
+	const [notebookIndex, setNotebookIndex] =
+		useState<NotebookIndexResponse | null>(null);
+	const [notebook, setNotebook] = useState<NotebookSessionState | null>(null);
+	const [notebookBusy, setNotebookBusy] = useState(false);
+	const [editingNotebookNode, setEditingNotebookNode] = useState<string | null>(
+		null,
+	);
 
 	// Session config options (model/mode/…) exposed by the agent after connect.
 	const [configOptions, setConfigOptions] = useState<SessionConfigOption[]>(
@@ -188,6 +243,8 @@ export function ChatApp(): React.ReactElement {
 		},
 		[resetPromptHistory],
 	);
+	const activeNotebookNodeRef = useRef<string | null>(null);
+	const activeNotebookOutputRef = useRef<string | null>(null);
 
 	// Load agent catalog. The server's defaultAgentId (pi by default) is
 	// preselected and auto-connected below; the pull-down still lets the user
@@ -214,7 +271,7 @@ export function ChatApp(): React.ReactElement {
 	useEffect(() => {
 		const el = scrollRef.current;
 		if (el) el.scrollTop = el.scrollHeight;
-	}, [turns, permission]);
+	}, [turns, permission, notebook]);
 
 	// WHY: provider silence is normal during long reasoning. A local elapsed
 	// clock proves the request is still active without inventing a completion
@@ -245,23 +302,58 @@ export function ChatApp(): React.ReactElement {
 	}, [running]);
 
 	const applyUpdate = useCallback((u: SessionUpdate) => {
+		const notebookNodeId = activeNotebookNodeRef.current;
 		switch (u.type) {
 			case "agent_message_chunk":
-				appendAssistant(u.text, "text");
+				if (notebookNodeId) {
+					appendNotebookAssistant(notebookNodeId, u.text, "text");
+				} else {
+					appendAssistant(u.text, "text");
+				}
 				break;
 			case "agent_thought_chunk":
-				appendAssistant(u.text, "thoughts");
+				if (notebookNodeId) {
+					appendNotebookAssistant(notebookNodeId, u.text, "thoughts");
+				} else {
+					appendAssistant(u.text, "thoughts");
+				}
 				break;
 			case "tool_call":
-				setTurns((prev) => [
-					...prev,
-					{
-						kind: "tool",
-						id: u.toolCallId,
-						title: u.title ?? "(tool)",
-						status: u.status,
-					},
-				]);
+				if (notebookNodeId) {
+					setNotebook((state) =>
+						state
+							? {
+									...state,
+									nodes: state.nodes.map((node) =>
+										node.id === notebookNodeId
+											? {
+													...node,
+													outputs: [
+														...node.outputs,
+														{
+															kind: "tool",
+															id: u.toolCallId,
+															title: u.title ?? "(tool)",
+															status: u.status,
+														},
+													],
+												}
+											: node,
+									),
+								}
+							: state,
+					);
+				} else {
+					setTurns((prev) => [
+						...prev,
+						{
+							kind: "tool",
+							id: u.toolCallId,
+							title: u.title ?? "(tool)",
+							status: u.status,
+						},
+					]);
+				}
 				if (u.permissionRequest && !u.permissionRequest.isCancelled) {
 					setPermission({
 						requestId: u.permissionRequest.requestId,
@@ -274,6 +366,26 @@ export function ChatApp(): React.ReactElement {
 				}
 				break;
 			case "tool_call_update":
+				setNotebook((state) =>
+					state
+						? {
+								...state,
+								nodes: state.nodes.map((node) => ({
+									...node,
+									outputs: node.outputs.map((output) =>
+										output.kind === "tool" &&
+										output.id === u.toolCallId
+											? {
+													...output,
+													status: u.status ?? output.status,
+													title: u.title ?? output.title,
+												}
+											: output,
+									),
+								})),
+							}
+						: state,
+				);
 				setTurns((prev) =>
 					prev.map((t) =>
 						t.kind === "tool" && t.id === u.toolCallId
@@ -305,6 +417,38 @@ export function ChatApp(): React.ReactElement {
 				break;
 		}
 	}, []);
+
+	function appendNotebookAssistant(
+		nodeId: string,
+		value: string,
+		field: "text" | "thoughts",
+	): void {
+		const outputId = activeNotebookOutputRef.current;
+		if (!outputId) return;
+		setNotebook((state) =>
+			state
+				? {
+						...state,
+						nodes: state.nodes.map((node) =>
+							node.id === nodeId
+								? {
+										...node,
+										outputs: node.outputs.map((output) =>
+											output.kind === "assistant" &&
+											output.id === outputId
+												? {
+														...output,
+														[field]: output[field] + value,
+													}
+												: output,
+										),
+									}
+								: node,
+						),
+					}
+				: state,
+		);
+	}
 
 	/** Append streamed text to the trailing assistant turn (create if needed). */
 	function appendAssistant(text: string, field: "text" | "thoughts"): void {
@@ -425,6 +569,11 @@ export function ChatApp(): React.ReactElement {
 				);
 				sessionRef.current = session.sessionId;
 				setConfigOptions(configured);
+				setNotebook(
+					await transport
+						.loadNotebookSession(session.sessionId)
+						.catch(() => null),
+				);
 				setReady(true);
 			} catch (e) {
 				const msg = String((e as Error).message ?? e);
@@ -487,6 +636,8 @@ export function ChatApp(): React.ReactElement {
 			setError(null);
 			setPermission(null);
 			setTurns([]);
+			setNotebook(null);
+			setEditingNotebookNode(null);
 			sessionRef.current = null;
 			setReady(false);
 			setConfigOptions([]);
@@ -586,30 +737,173 @@ export function ChatApp(): React.ReactElement {
 		void selectAgent(defaultAgentId);
 	}, [defaultAgentId, agents, selectAgent]);
 
+	const executeNotebookNode = useCallback(
+		async (nodeId: string, prompt: string, advance: boolean) => {
+			const sessionId = sessionRef.current;
+			if (!sessionId || busy) return;
+			const outputId = nextId("notebook-output");
+			activeNotebookNodeRef.current = nodeId;
+			activeNotebookOutputRef.current = outputId;
+			setNotebook((state) =>
+				state
+					? {
+							...state,
+							nodes: state.nodes.map((node) =>
+								node.id === nodeId
+									? {
+											...node,
+											outputs: [
+												...node.outputs,
+												{
+													kind: "assistant",
+													id: outputId,
+													text: "",
+													thoughts: "",
+												},
+											],
+										}
+									: node,
+							),
+						}
+					: state,
+			);
+			setBusy(true);
+			setError(null);
+			try {
+				await transport.sendPrompt(sessionId, [
+					{ type: "text", text: prompt },
+				]);
+				if (advance) {
+					setNotebook((state) =>
+						state
+							? {
+									...state,
+									selectedNodeId: advanceNotebookSelection(
+										state.nodes,
+										nodeId,
+									),
+								}
+							: state,
+					);
+				}
+			} catch (e) {
+				setError(String((e as Error).message ?? e));
+			} finally {
+				activeNotebookNodeRef.current = null;
+				activeNotebookOutputRef.current = null;
+				setBusy(false);
+			}
+		},
+		[busy],
+	);
+
 	const send = useCallback(async () => {
-		const text = input.trim();
+		const submission = classifyComposerSubmission(input);
+		const text = submission.display;
 		const sessionId = sessionRef.current;
 		if (!text || !sessionId || running) return;
 		setInput("");
 		resetPromptHistory();
+		if (notebook) {
+			if (editingNotebookNode) {
+				const node = notebook.nodes.find(
+					(candidate) => candidate.id === editingNotebookNode,
+				);
+				if (!node) {
+					setEditingNotebookNode(null);
+					return;
+				}
+				setNotebook((state) =>
+					state
+						? {
+								...state,
+								dirty: true,
+								nodes: state.nodes.map((candidate) =>
+									candidate.id === editingNotebookNode
+										? { ...candidate, prompt: text }
+										: candidate,
+								),
+							}
+						: state,
+				);
+				setEditingNotebookNode(null);
+				await executeNotebookNode(node.id, text, true);
+				return;
+			}
+			const inputNode: NotebookNode = {
+				id: nextId("input"),
+				kind: "input",
+				prompt: text,
+				outputs: [],
+			};
+			setNotebook((state) =>
+				state
+					? {
+							...state,
+							nodes: insertAdHocNode(
+								state.nodes,
+								inputNode,
+								state.selectedNodeId,
+							),
+						}
+					: state,
+			);
+			await executeNotebookNode(inputNode.id, text, false);
+			return;
+		}
 		setTurns((prev) => [
 			...prev,
 			{ kind: "user", id: `u-${prev.length}`, text },
 		]);
 		setRunning(true);
+		setShellRunning(submission.kind === "shell");
 		setActivity({
-			state: "thinking",
-			label: "Thinking",
+			state: submission.kind === "shell" ? "shell" : "thinking",
+			label:
+				submission.kind === "shell" ? "Running shell command" : "Thinking",
 			active: true,
 			timestamp: new Date().toISOString(),
 		});
 		setError(null);
 		try {
-			await transport.sendPrompt(sessionId, [{ type: "text", text }]);
+			// WHY: a leading `!` is an explicit user shell action, not agent
+			// context. Keeping it off sendPrompt prevents model/tool interception
+			// and preserves the ordinary ACP path for every non-shell submission.
+			if (submission.kind === "shell") {
+				const result = await transport.executeShell(
+					sessionId,
+					submission.command,
+				);
+				setTurns((prev) => [
+					...prev,
+					{
+						kind: "shell",
+						id: `s-${Date.now()}-${prev.length}`,
+						text: formatShellResult(submission.command, result),
+					},
+				]);
+			} else {
+				await transport.sendPrompt(sessionId, [
+					{ type: "text", text: submission.prompt },
+				]);
+			}
 		} catch (e) {
-			setError(String((e as Error).message ?? e));
+			const message = String((e as Error).message ?? e);
+			if (submission.kind === "shell") {
+				setTurns((prev) => [
+					...prev,
+					{
+						kind: "shell",
+						id: `s-${Date.now()}-${prev.length}`,
+						text: formatShellFailure(submission.command, message),
+					},
+				]);
+			} else {
+				setError(message);
+			}
 		} finally {
 			setRunning(false);
+			setShellRunning(false);
 			setStopping(false);
 			setActivity({
 				state: "idle",
@@ -618,7 +912,14 @@ export function ChatApp(): React.ReactElement {
 				timestamp: new Date().toISOString(),
 			});
 		}
-	}, [input, resetPromptHistory, running]);
+	}, [
+		input,
+		resetPromptHistory,
+		running,
+		notebook,
+		editingNotebookNode,
+		executeNotebookNode,
+	]);
 
 	const navigateComposerHistory = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
@@ -705,6 +1006,7 @@ export function ChatApp(): React.ReactElement {
 				session.configOptions ?? [],
 			);
 			sessionRef.current = session.sessionId;
+			setNotebook(null);
 			setTurns([]);
 			setPermission(null);
 			setConfigOptions(configured);
@@ -802,6 +1104,11 @@ export function ChatApp(): React.ReactElement {
 					session.configOptions ?? [],
 				);
 				sessionRef.current = session.sessionId;
+				setNotebook(
+					await transport
+						.loadNotebookSession(session.sessionId)
+						.catch(() => null),
+				);
 				setConfigOptions(configured);
 				setReady(true);
 			} catch (e) {
@@ -812,6 +1119,210 @@ export function ChatApp(): React.ReactElement {
 		},
 		[agentId, configureSession, resetPromptHistory, running],
 	);
+
+
+	// Persist notebook workflow state as a server-side session sidecar. It
+	// contains prompts and execution output, never NOTEBOOK_GITHUB_TOKEN.
+	useEffect(() => {
+		const sessionId = sessionRef.current;
+		if (!sessionId || !notebook) return;
+		const timer = window.setTimeout(() => {
+			void transport
+				.saveNotebookSession(sessionId, notebook)
+				.catch((e) => setError(String((e as Error).message ?? e)));
+		}, 150);
+		return () => window.clearTimeout(timer);
+	}, [notebook]);
+
+	const refreshNotebookIndex = useCallback(async () => {
+		setNotebookBusy(true);
+		setError(null);
+		try {
+			const index = await transport.listNotebooks(
+				notebookSource,
+				notebookRef,
+			);
+			setNotebookIndex(index);
+			setNotebookSource(index.source.repository);
+			setNotebookRef(index.source.ref);
+		} catch (e) {
+			setError(String((e as Error).message ?? e));
+		} finally {
+			setNotebookBusy(false);
+		}
+	}, [notebookSource, notebookRef]);
+
+	const openNotebookPanel = useCallback(() => {
+		setNotebookPanelOpen(true);
+		if (!notebookIndex) void refreshNotebookIndex();
+	}, [notebookIndex, refreshNotebookIndex]);
+
+	const loadNotebook = useCallback(
+		async (entry: NotebookIndexEntry) => {
+			if (!notebookIndex) return;
+			setNotebookBusy(true);
+			setError(null);
+			try {
+				const document = await transport.loadNotebook(
+					notebookIndex,
+					entry,
+				);
+				const nodes = nodesFromPrompts(document.prompts);
+				setNotebook({
+					version: 1,
+					source: document.source,
+					notebookName: document.name,
+					path: document.path,
+					fileSha: document.sha,
+					readmeSha: document.readmeSha,
+					nodes,
+					selectedNodeId: nodes[0]?.id ?? null,
+					dirty: false,
+				});
+				setEditingNotebookNode(null);
+			} catch (e) {
+				setError(String((e as Error).message ?? e));
+			} finally {
+				setNotebookBusy(false);
+			}
+		},
+		[notebookIndex],
+	);
+
+	const saveNotebook = useCallback(async () => {
+		if (!notebook) return;
+		setNotebookBusy(true);
+		setError(null);
+		try {
+			const saved = await transport.saveNotebook(
+				notebook,
+				notebookPromptsForSave(notebook.nodes),
+			);
+			setNotebook((state) =>
+				state
+					? { ...state, fileSha: saved.sha, dirty: false }
+					: state,
+			);
+		} catch (e) {
+			setError(String((e as Error).message ?? e));
+		} finally {
+			setNotebookBusy(false);
+		}
+	}, [notebook]);
+
+	const addNotebook = useCallback(
+		async (name: string, path: string) => {
+			if (!notebookIndex) return;
+			setNotebookBusy(true);
+			setError(null);
+			try {
+				const result = await transport.addNotebook(
+					notebookIndex,
+					name,
+					path,
+				);
+				setNotebookIndex(result.index);
+				if (result.notebook) {
+					const nodes = nodesFromPrompts(result.notebook.prompts);
+					setNotebook({
+						version: 1,
+						source: result.notebook.source,
+						notebookName: result.notebook.name,
+						path: result.notebook.path,
+						fileSha: result.notebook.sha,
+						readmeSha: result.notebook.readmeSha,
+						nodes,
+						selectedNodeId: nodes[0]?.id ?? null,
+						dirty: false,
+					});
+				}
+			} catch (e) {
+				setError(String((e as Error).message ?? e));
+			} finally {
+				setNotebookBusy(false);
+			}
+		},
+		[notebookIndex],
+	);
+
+	const removeRemoteNotebook = useCallback(
+		async (entry: NotebookIndexEntry) => {
+			if (!notebookIndex) return;
+			if (!window.confirm(`Remove notebook "${entry.name}" from GitHub?`)) {
+				return;
+			}
+			setNotebookBusy(true);
+			setError(null);
+			try {
+				const result = await transport.removeNotebook(
+					notebookIndex,
+					entry,
+				);
+				setNotebookIndex(result.index);
+				if (notebook?.path === entry.path) {
+					setNotebook(null);
+					setEditingNotebookNode(null);
+				}
+			} catch (e) {
+				setError(String((e as Error).message ?? e));
+			} finally {
+				setNotebookBusy(false);
+			}
+		},
+		[notebookIndex, notebook],
+	);
+
+	const runNextNotebookNode = useCallback(() => {
+		if (!notebook?.selectedNodeId) return;
+		const node = notebook.nodes.find(
+			(candidate) => candidate.id === notebook.selectedNodeId,
+		);
+		if (node?.kind === "notebook") {
+			void executeNotebookNode(node.id, node.prompt, true);
+		}
+	}, [notebook, executeNotebookNode]);
+
+	const editNotebookNode = useCallback(
+		(node: NotebookNode) => {
+			setNotebook((state) =>
+				state ? { ...state, selectedNodeId: node.id } : state,
+			);
+			setEditingNotebookNode(node.id);
+			setInput(node.prompt);
+		},
+		[],
+	);
+
+	const pinNode = useCallback((nodeId: string) => {
+		setNotebook((state) =>
+			state
+				? {
+						...state,
+						nodes: pinNotebookNode(state.nodes, nodeId),
+						dirty: true,
+					}
+				: state,
+		);
+	}, []);
+
+	const removeNode = useCallback((node: NotebookNode) => {
+		setNotebook((state) => {
+			if (!state) return state;
+			const removed = removeNotebookNode(
+				state.nodes,
+				node.id,
+				state.selectedNodeId,
+			);
+			return {
+				...state,
+				...removed,
+				dirty: state.dirty || node.kind === "notebook",
+			};
+		});
+		setEditingNotebookNode((current) =>
+			current === node.id ? null : current,
+		);
+	}, []);
 
 	const respond = useCallback(
 		async (optionId: string) => {
@@ -1150,7 +1661,44 @@ export function ChatApp(): React.ReactElement {
 						)}
 					</>
 				)}
+				<button
+					className="notebook-toggle"
+					disabled={notebookBusy}
+					onClick={openNotebookPanel}
+				>
+					Notebook
+				</button>
+				<button
+					className="run-next"
+					disabled={
+						!ready ||
+						busy ||
+						notebookBusy ||
+						!notebook?.selectedNodeId
+					}
+					onClick={runNextNotebookNode}
+				>
+					Run next
+				</button>
 			</header>
+
+			{notebookPanelOpen && (
+				<NotebookPanel
+					source={notebookSource}
+					sourceRef={notebookRef}
+					index={notebookIndex}
+					activeNotebook={notebook}
+					busy={notebookBusy}
+					onSourceChange={setNotebookSource}
+					onRefChange={setNotebookRef}
+					onRefresh={() => void refreshNotebookIndex()}
+					onLoad={(entry) => void loadNotebook(entry)}
+					onSave={() => void saveNotebook()}
+					onAdd={(name, path) => void addNotebook(name, path)}
+					onRemove={(entry) => void removeRemoteNotebook(entry)}
+					onClose={() => setNotebookPanelOpen(false)}
+				/>
+			)}
 
 			{error && (
 				<div className="error" onClick={() => setError(null)}>
@@ -1455,6 +2003,28 @@ export function ChatApp(): React.ReactElement {
 				{turns.map((t) => (
 					<TurnView key={t.id} turn={t} />
 				))}
+				{notebook?.nodes.map((node) => (
+					<NotebookNodeView
+						key={node.id}
+						node={node}
+						selected={notebook.selectedNodeId === node.id}
+						editing={editingNotebookNode === node.id}
+						busy={busy || notebookBusy}
+						onSelect={() =>
+							setNotebook((state) =>
+								state
+									? { ...state, selectedNodeId: node.id }
+									: state,
+							)
+						}
+						onRun={() =>
+							void executeNotebookNode(node.id, node.prompt, true)
+						}
+						onEdit={() => editNotebookNode(node)}
+						onRemove={() => removeNode(node)}
+						onPin={() => pinNode(node.id)}
+					/>
+				))}
 				{permission && (
 					<div className="permission">
 						<div className="perm-title">🔐 {permission.title}</div>
@@ -1473,7 +2043,7 @@ export function ChatApp(): React.ReactElement {
 				{!ready && !busy && turns.length === 0 && (
 					<div className="empty">Please Select Agent</div>
 				)}
-				{ready && turns.length === 0 && (
+				{ready && turns.length === 0 && !notebook && (
 					<div className="empty">
 						Connected to {agentName}. Send a message to start.
 					</div>
@@ -1495,9 +2065,13 @@ export function ChatApp(): React.ReactElement {
 					ref={textareaRef}
 					value={input}
 					placeholder={
-						ready ? "Message the agent…" : "Please Select Agent"
+						ready
+							? editingNotebookNode
+								? "Edit notebook prompt and run…"
+								: READY_COMPOSER_PLACEHOLDER
+							: "Please Select Agent"
 					}
-					disabled={!ready || running}
+					disabled={!ready || running || notebookBusy}
 					onChange={(e) => handleComposerChange(e.target.value)}
 					onKeyDown={(e) => {
 						if (navigateComposerHistory(e)) return;
@@ -1507,7 +2081,9 @@ export function ChatApp(): React.ReactElement {
 						}
 					}}
 				/>
-				{running ? (
+				{running && shellRunning ? (
+					<button disabled>Running…</button>
+				) : running ? (
 					<button
 						className="stop"
 						onClick={() => void stop()}
@@ -1518,7 +2094,7 @@ export function ChatApp(): React.ReactElement {
 				) : (
 					<button
 						onClick={() => void send()}
-						disabled={!ready || !input.trim()}
+						disabled={!ready || notebookBusy || !input.trim()}
 					>
 						Send
 					</button>
@@ -1653,6 +2229,15 @@ function TurnView({ turn }: { turn: Turn }): React.ReactElement | null {
 						<CopyAction text={turn.text} />
 					</div>
 				)}
+			</div>
+		);
+	}
+	if (turn.kind === "shell") {
+		return (
+			<div className="turn assistant shell">
+				<div className="bubble markdown">
+					<CopyablePre>{turn.text}</CopyablePre>
+				</div>
 			</div>
 		);
 	}

@@ -18,12 +18,14 @@ import {
 } from "./config-store";
 import { buildRuntime, buildAgentConfig } from "./acp-host";
 import type { WsEvent } from "./protocol";
+import { resolve } from "node:path";
 
 /** Sink for server→client events (the WS broadcast). */
 export type EventSink = (event: WsEvent) => void;
 
 export class SessionHost {
 	private readonly clients = new Map<string, AcpClient>();
+	private readonly sessionDirectories = new Map<string, string>();
 	private readonly runtime: AcpRuntimeConfig;
 	/**
 	 * Runtime override of the default cwd, set by `setProjectDir` (POST
@@ -119,6 +121,28 @@ export class SessionHost {
 	}
 
 	/**
+	 * Bind a session to the cwd used by its ACP create/load operation.
+	 *
+	 * WHY: shell passthrough must never trust a browser-provided filesystem
+	 * path. Keeping this association beside the live ACP clients lets the server
+	 * derive the active project's cwd from the session id alone.
+	 */
+	bindSessionDirectory(sessionId: string, cwd: string): void {
+		this.sessionDirectories.set(sessionId, resolve(cwd));
+	}
+
+	/** Resolve the cwd only when the requested session is currently active. */
+	activeSessionDirectory(sessionId: string): string {
+		const active = [...this.clients.values()].some(
+			(client) => client.getCurrentSessionId() === sessionId,
+		);
+		if (!active) throw new Error(`No active session "${sessionId}"`);
+		const cwd = this.sessionDirectories.get(sessionId);
+		if (!cwd) throw new Error(`No working directory for session "${sessionId}"`);
+		return cwd;
+	}
+
+	/**
 	 * Route a permission response to whichever initialized client holds the
 	 * pending request. Permission requests are resolved by requestId inside the
 	 * client's PermissionManager, so responding on the right client is enough;
@@ -144,5 +168,6 @@ export class SessionHost {
 			[...this.clients.values()].map((c) => c.disconnect().catch(() => {})),
 		);
 		this.clients.clear();
+		this.sessionDirectories.clear();
 	}
 }

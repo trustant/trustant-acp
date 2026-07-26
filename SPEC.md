@@ -151,6 +151,9 @@ Single JSON file, loaded at server start, hot-reloadable via the settings API. S
   consistently expose the optional generated helper. TruACP clears its metadata
   only after the owning agent confirms deletion.
 - `POST /session/:id/prompt`, `/session/:id/cancel`, `/session/:id/config-option`, `/session/:id/mode`
+- `POST /api/session/shell` `{ sessionId, command }` executes an explicit
+  user `!` command directly in the active session cwd. The server derives cwd
+  from live session state; the browser cannot supply or override it.
 - `GET /api/directory` (current default cwd), `POST /api/directory` (change default cwd) — see §10e.
 - `POST /permission/:id` (approve/reject)
 - `GET/PUT /config`
@@ -519,6 +522,18 @@ The chat UI connects to a default agent and lets the user switch:
   session with `ArrowUp`/`ArrowDown`. It preserves the unfinished draft and
   does not intercept selection, IME/modifier input, or ordinary multiline
   cursor movement.
+- In a ready session the composer placeholder is exactly **"Message the agent
+  or use the '!' to execute shell commands."** A trimmed submission whose first
+  character is `!` bypasses ACP and every agent, while embedded `!` characters
+  remain ordinary prompt text. The browser sends only the active `sessionId`
+  and command to `POST /api/session/shell`; Node runs it in the cwd recorded
+  when that session was created/loaded/resumed/forked. The user command and a
+  separate shell result turn are both visible in the conversation.
+- Shell execution uses the platform shell with stdin closed, a 30-second
+  timeout, a 256 KiB combined stdout/stderr capture limit, process-tree
+  termination, explicit timeout/truncation/nonzero-exit rendering, and a
+  credential-filtered child environment. Transport and server logs never
+  serialize the host environment. The browser imports no Node process API.
 - Transcript text remains selectable. User and assistant turns expose a copy
   action, and rendered code blocks expose their own copy action. Message copy
   uses the original Markdown; the browser uses `navigator.clipboard` when
@@ -775,6 +790,11 @@ Trustable's managed browser UI intentionally uses the single launch-time
 that today only reads config): `setProjectDir(dir)` updates the field consulted by
 `initialize`/`newSession` fallbacks.
 
+`SessionHost` also records the resolved cwd for every successful new/load/resume/
+fork operation. Direct shell mode accepts only the currently active session id
+and resolves its cwd from this host-owned mapping; a stale or unknown session is
+rejected instead of falling back to the default directory.
+
 ### New session in a chosen directory
 
 - **`POST /api/session/new`** already accepts `{ agentId, cwd? }` and creates the
@@ -815,10 +835,44 @@ that today only reads config): `setProjectDir(dir)` updates the field consulted 
 - For Codex, verify session readiness applies `agent-full-access`; for Claude,
   verify it applies `bypassPermissions`. Reading files, running ordinary shell
   commands, and modifying the workbench must not create permission prompts.
+- In each supported agent session submit `!pwd`, stdout/stderr, and a nonzero
+  command. Confirm no agent prompt is emitted, the resolved cwd is the active
+  project, command/result remain visible in the conversation, and timeout,
+  truncation, stderr, and exit status are explicit.
 
 New REST endpoints: `GET /api/directory`, `POST /api/directory`.
+
+## 10f. GitHub-backed notebook workflows
+
+The browser can load an ordered prompt notebook into an existing ACP session.
+The model/parser/reducer live in `src/types/notebook.ts` and
+`src/services/notebook.ts`; the GitHub Contents API client lives exclusively on
+the Node server in `server/notebook-github.ts`.
+
+The default source is `trustable-ai/notebooks` on `main`. Public reads need no
+credential. Writes use `process.env.NOTEBOOK_GITHUB_TOKEN`; the browser receives
+only `hasToken` and never displays a token field. The source branch is explicit,
+paths are validated repository-relative Markdown paths, and every mutation
+checks the loaded SHA before sending it to GitHub. File/index operations are
+separate commits and report partial completion explicitly.
+
+REST endpoints are `POST /api/notebooks/{index,load,add,remove}` and
+`PUT /api/notebooks/save`. Session notebook state is persisted through
+`POST /api/sessions/notebook/get` and `PUT /api/sessions/notebook` as a
+whitelisted sidecar under `.acp-data`; it contains notebook/ad-hoc nodes,
+execution outputs, selection, dirty state, and source SHAs, but no credentials.
+A fork copies this sidecar. New sessions start without one.
+
+Notebook nodes use the existing `/api/session/prompt` path. Node execution
+advances to the next persisted node exactly once; ad-hoc input is inserted
+before selection without advancing; pin promotes it into the persisted save
+set. The final node clears selection. Ordinary chats follow the pre-existing
+path whenever no notebook is loaded.
+
+The complete product contract is [spec/notebook.md](../spec/notebook.md).
 
 ## 11. Verification
 
 - **Phase 1**: from a terminal, server spawns `claude` in a chosen cwd, completes `initialize`→`newSession`→`sendPrompt`, and streams `agent_message_chunk`s to stdout. Repeat for `codex` and `pi`.
 - **End-to-end**: open `localhost:PORT`, start a chat, send a prompt, see streamed response + a tool call with diff, approve a permission, fork/resume a session, export to markdown. `config.json` alone (plus `.env`) fully configures agents, cwd, and display.
+

@@ -223,6 +223,7 @@ function landingPage(ctx: RouteContext): string {
  <li><code>POST /api/session/initialize</code> · <code>/new</code> · <code>/prompt</code> · <code>/cancel</code> · <code>/load</code> · <code>/resume</code> · <code>/fork</code> · <code>/list</code> · <code>/config-option</code></li>
  <li><code>POST /api/permission/respond</code></li>
  <li><code>POST /api/sessions/query</code> · <code>/messages/get</code> · <code>/delete</code> · <code>PUT /api/sessions/messages</code></li>
+ <li><code>POST /api/notebooks/index</code> · <code>/load</code> · <code>/add</code> · <code>/remove</code> · <code>PUT /api/notebooks/save</code></li>
  <li><code>WS   /ws</code> — streams <code>sessionUpdate</code> events</li>
 </ul>
 </body></html>`;
@@ -417,6 +418,9 @@ async function handleRequest(
 		// Client errors: 400 for bad input, 409 for wrong lifecycle state.
 		let status = 500;
 		if (/^Bad request:/.test(message)) status = 400;
+		else if (/^Forbidden:/.test(message)) status = 403;
+		else if (/^Conflict:/.test(message)) status = 409;
+		else if (/^Upstream:|^Partial mutation:/.test(message)) status = 502;
 		else if (/not initialized|Unknown agent|No live client/.test(message))
 			status = 409;
 		send(res, status, { error: message });
