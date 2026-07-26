@@ -5,7 +5,8 @@ ordered phases:
 
 1. **Install components** — coding agents and ACP adapters globally via npm,
    then Pi extensions through `pi install` so Pi actually registers them. The
-   package list and pins live entirely in [pi.version](pi.version).
+   package list and pins live in [pi.version](pi.version); the five upstream Pi
+   artifacts are additionally locked by [pi.integrity](pi.integrity).
 2. **Build** — *only if there is a `package.json` in the current directory*:
    builds `dist-web/` (the web UI) and `dist-bin/truacp.cjs` (the server bundle).
 3. **Install** — copies the bundle to `~/.local/lib/truacp` and writes the
@@ -22,11 +23,15 @@ on PATH; this script installs agents, never a runtime.
 
 ## Self-contained deployment
 
-`setup.sh` needs **no other file from this repo**. Given just three files:
+`setup.sh` needs **no source tree from this repo**. Given this portable runtime
+payload:
 
 ```
 setup.sh
 pi.version
+pi.integrity
+pi-acp-package.tgz
+extensions/trustable-runtime.ts
 dist-bin/truacp.cjs
 ```
 
@@ -35,7 +40,8 @@ no `node_modules`, no secondary installer, and no network access beyond npm for
 the agents. That is what makes it dropable into a Docker layer:
 
 ```dockerfile
-COPY setup.sh pi.version ./
+COPY setup.sh pi.version pi.integrity pi-acp-package.tgz ./
+COPY extensions/trustable-runtime.ts extensions/
 COPY dist-bin/truacp.cjs dist-bin/
 RUN sh setup.sh
 ```
@@ -43,7 +49,7 @@ RUN sh setup.sh
 With no `package.json` the build phase is skipped, and phase 3 installs the
 prebuilt bundle directly. The bundle is looked for next to the script first
 (`<script dir>/dist-bin/truacp.cjs`, then `<script dir>/truacp.cjs`) and then in
-the current directory, so both the three-file layout and a source checkout work.
+the current directory, so both the portable payload and a source checkout work.
 
 `setup.sh` is intentionally the only installer. `npm run build` only creates the
 bundle, which prevents build hosts from being modified and guarantees that VM
@@ -59,7 +65,7 @@ offline. Each adapter drives an underlying CLI that must also be on PATH.
 |---|---|---|
 | Claude Code | `@anthropic-ai/claude-code` + `@agentclientprotocol/claude-agent-acp` | `claude` |
 | Codex | `@openai/codex` + `@agentclientprotocol/codex-acp` | `codex` |
-| Pi | `@earendil-works/pi-coding-agent` + `pi-acp` | `pi` |
+| Pi | five lockstep `@earendil-works/pi-*` packages + Trustable `pi-acp` fork | `pi` |
 
 Pi additionally gets two extensions to the `pi` CLI (not ACP adapters),
 registered by `pi install` rather than only copied by global npm:
@@ -91,13 +97,22 @@ hardcoded in `setup.sh`.** Each line is a literal npm install spec,
 @anthropic-ai/claude-code@2.1.216
 @agentclientprotocol/claude-agent-acp@0.60.0
 ...
-@earendil-works/pi-coding-agent@0.80.10
-pi-acp@0.0.31
+@earendil-works/pi-ai@0.82.0
+@earendil-works/pi-tui@0.82.0
+@earendil-works/pi-agent-core@0.82.0
+@earendil-works/pi-storage-sqlite-node@0.82.0
+@earendil-works/pi-coding-agent@0.82.0
 ```
 
 `setup.sh` reads the file, passes CLI/ACP specs to `npm install -g`, and registers
 the two Pi extension specs as `npm:<package>@<version>` with `pi install`.
 Upgrading an agent or extension is therefore a one-line edit here.
+
+The upstream Pi package set is a single reviewed release. Before installation,
+`setup.sh` compares `npm view <spec> dist.integrity` with the checked-in SHA-512
+value in `pi.integrity`; any missing entry, unexpected spec, or mismatch aborts
+the setup. npm then verifies the downloaded artifact using registry integrity.
+Trustable no longer builds, packages, or initializes a `pi` source fork.
 
 **Every entry must carry a version.** An unpinned spec would silently resolve to
 latest and break build reproducibility, so the script treats it as an error and
@@ -117,21 +132,20 @@ when `~/.local/bin` is not already on PATH. A single `npm install -g --force`
 covers CLI and ACP packages. Pi extensions are skipped when the exact pinned
 source is already present in `pi list`, keeping re-runs idempotent; the
 compatibility transform is still checked and applied so existing VMs receive
-the recovery fix.
+the recovery fix. The separately pinned Trustable `pi-acp` fork is built from
+the nested source in development or installed from `pi-acp-package.tgz` in a
+portable image payload.
 
-`pi-acp@0.0.31` performs an update lookup independently from Pi and does not
-honor Pi's `PI_SKIP_VERSION_CHECK` or `PI_OFFLINE` flags. Immediately after the
-pinned global install, `setup.sh` applies a narrow compatibility guard to the
-installed adapter. This prevents its unsolicited `npm view` request and startup
-banner when either flag is set. The patch is idempotent and checks the expected
-adapter structure; setup fails clearly if a future pinned version changes that
-structure, so the compatibility layer must be reviewed rather than silently
-misapplied. This temporary patch can be removed once `pi-acp` supports the flags
-natively.
+The managed runtime extension owns Trustable-specific execution policy. Its
+`message_update` hook detects four repeated normalized 32-word windows inside
+one assistant response, calls upstream Pi's `ctx.abort()` for that active run,
+and replaces the finalized assistant message with an explicit error. Detection
+resets for every assistant response and deliberately imposes no global
+provider-step or turn budget, so healthy long-running sessions remain valid.
 
 ## Phases 2 and 3 — build and install
 
-The two phases are gated independently, which is what allows the three-file
+The two phases are gated independently, which is what allows the portable
 deployment above:
 
 | In the working directory | Phase 2 (build) | Phase 3 (install) |

@@ -1,0 +1,7 @@
+# pi.integrity — reviewed npm Subresource Integrity values for the lockstep
+# upstream Pi runtime in pi.version. Format: `<module>@<version> <sha512>`.
+@earendil-works/pi-ai@0.82.0 sha512-8MvW9+zno13sXDuT2kFMnWeTNUufUhPeZDRVO+igGoBRCDWgn7Xh2FkRQI1mRuet6QhF4ENQuLYdIAOyG6BhNw==
+@earendil-works/pi-tui@0.82.0 sha512-9IDjQOXne7t9l2s2YcjnIBxsVNVPE7qScVSB3YmFlXsBW4pfo2gOElTxggV84KrRiGqABnlFPBWbf0k54hszHQ==
+@earendil-works/pi-agent-core@0.82.0 sha512-bnS9DpOKK5T/F/gQkaOnYdMsuuciWiScfAHHWC+k5OQ0HxjSqMFQvp8keurULLoT4+v8NHv4V14pNvd4hsfC0Q==
+@earendil-works/pi-storage-sqlite-node@0.82.0 sha512-2QuHLWPHH40X0vGxtl142jry92WK6d5gSfFKlVtoeztdxma6Hs5MS3IOebBh4RV24/SD+xY9HPT9I8NSY1tavA==
+@earendil-works/pi-coding-agent@0.82.0 sha512-Qnqgn9zhJFQ2HZ8R4iNuGhyCk93XX6+eUw9i+TjTuo47amzCy93ft3bB6yaUCleCrNO58dJDHYSGNHv/GAPWKg==
