@@ -876,3 +876,26 @@ The complete product contract is [spec/notebook.md](../spec/notebook.md).
 - **Phase 1**: from a terminal, server spawns `claude` in a chosen cwd, completes `initialize`→`newSession`→`sendPrompt`, and streams `agent_message_chunk`s to stdout. Repeat for `codex` and `pi`.
 - **End-to-end**: open `localhost:PORT`, start a chat, send a prompt, see streamed response + a tool call with diff, approve a permission, fork/resume a session, export to markdown. `config.json` alone (plus `.env`) fully configures agents, cwd, and display.
 
+## Upstream Pi runtime ownership (issue #71)
+
+This section supersedes earlier fork-specific Pi packaging language. Trustable
+uses the exact upstream `@earendil-works/pi-*` `0.82.0` package set recorded in
+`pi.version`; `setup.sh` must verify each reviewed SHA-512 value from
+`pi.integrity` before installation. The ACP repository must not contain a `pi`
+gitlink, build the Pi source tree, accept prebuilt `pi-packages`, or fall back to
+an unpinned registry release. The separately owned `pi-acp` fork remains pinned
+because it supplies Trustable's ACP launch and lifecycle behavior.
+
+Trustable-specific repeated-stream protection belongs to
+`extensions/trustable-runtime.ts`, using upstream Pi's `message_update`,
+`message_end`, and `ctx.abort()` extension contracts. Four occurrences of one
+normalized 32-word window within a single assistant text response abort the
+active provider run and finalize that assistant message with an explicit error.
+The detector resets for each assistant response. It must not impose a global
+turn, tool-call, or provider-step budget; healthy runs beyond 300 turns remain
+valid.
+
+Both clean `trudev` setup and production image setup consume the same
+`pi.version`, `pi.integrity`, managed extension, and pinned `pi-acp` artifact.
+No build may depend on a local Pi checkout, unpublished object, cached tarball,
+or developer-machine path.

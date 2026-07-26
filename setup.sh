@@ -15,8 +15,8 @@
 #
 # SELF-CONTAINED: this script needs no other file from the repo. Given just
 #
-#     setup.sh + pi.version + dist-bin/truacp.cjs + pi-acp-package.tgz
-#     + pi-packages/*.tgz + extensions/trustable-runtime.ts
+#     setup.sh + pi.version + pi.integrity + dist-bin/truacp.cjs
+#     + pi-acp-package.tgz + extensions/trustable-runtime.ts
 #
 # it installs a complete, working truacp into ~/.local/bin — no package.json, no
 # node_modules, no secondary installer, no network beyond npm for the agents.
@@ -79,6 +79,11 @@ if [ ! -f "$VERSIONS_FILE" ]; then
 	echo "✗ $VERSIONS_FILE not found — it lists the packages to install." >&2
 	exit 1
 fi
+INTEGRITY_FILE="$SCRIPT_DIR/pi.integrity"
+if [ ! -f "$INTEGRITY_FILE" ]; then
+	echo "✗ $INTEGRITY_FILE not found — it pins the reviewed upstream Pi artifacts." >&2
+	exit 1
+fi
 
 # Strip comments and surrounding whitespace, drop blank lines.
 PACKAGES=$(sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$VERSIONS_FILE" |
@@ -102,6 +107,35 @@ for pkg in $PACKAGES; do
 		;;
 	esac
 done
+
+# Verify the registry metadata against the reviewed SRI values before npm is
+# allowed to install upstream Pi. npm then verifies the downloaded tarballs
+# against the same registry integrity, while this checked-in comparison fails
+# closed if a package is replaced or its metadata drifts.
+while IFS= read -r integrity_line; do
+	integrity_line=$(printf '%s\n' "$integrity_line" |
+		sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+	[ -n "$integrity_line" ] || continue
+	# shellcheck disable=SC2086 # The manifest deliberately contains two fields.
+	set -- $integrity_line
+	if [ "$#" -ne 2 ]; then
+		echo "✗ $INTEGRITY_FILE contains an invalid entry: $integrity_line" >&2
+		exit 1
+	fi
+	spec=$1
+	expected_integrity=$2
+	if ! printf '%s\n' "$PACKAGES" | grep -Fqx "$spec"; then
+		echo "✗ $INTEGRITY_FILE pins $spec, but pi.version does not install it." >&2
+		exit 1
+	fi
+	actual_integrity=$(npm view "$spec" dist.integrity)
+	if [ "$actual_integrity" != "$expected_integrity" ]; then
+		echo "✗ integrity mismatch for $spec" >&2
+		echo "  expected: $expected_integrity" >&2
+		echo "  received: $actual_integrity" >&2
+		exit 1
+	fi
+done <"$INTEGRITY_FILE"
 
 echo "Packages pinned by $(basename "$VERSIONS_FILE"):"
 for pkg in $PACKAGES; do
@@ -153,67 +187,6 @@ echo
 # shellcheck disable=SC2086 # Both variables are deliberately word-split specs.
 npm install -g --force $PREFIX_ARGS $GLOBAL_PACKAGES
 
-# Install the exact nested Trustable Pi fork instead of resolving the coding
-# agent and core packages from npm. Source/VM mode builds the five lockstep
-# packages; image packaging supplies the same tarballs beside setup.sh.
-#
-# WHY: stream repetition can happen inside one provider response, below ACP and
-# extension hooks. Falling back to upstream would remove the only layer capable
-# of interrupting that loop while making setup appear successful.
-PI_SOURCE_DIR="$SCRIPT_DIR/pi"
-PI_PREBUILT_DIR="$SCRIPT_DIR/pi-packages"
-PI_BUILD_DIR=""
-PI_PACKAGE_DIR=""
-
-if [ -f "$PI_SOURCE_DIR/package.json" ]; then
-	if [ ! -f "$PI_SOURCE_DIR/package-lock.json" ]; then
-		echo "✗ nested Trustable Pi fork is missing package-lock.json." >&2
-		exit 1
-	fi
-	PI_BUILD_DIR=$(mktemp -d)
-	echo "Building nested Trustable Pi fork…"
-	(
-		cd "$PI_SOURCE_DIR"
-		# WHY: Pi's repository-level prepare hook configures Husky through Git
-		# metadata. A Lima/WSL setup consumes the mounted source tree but is not
-		# allowed to depend on the host worktree's private .git admin path.
-		npm ci --ignore-scripts
-		# WHY: Trustable builds must remain reproducible/offline and use the
-		# model catalogs reviewed in the pinned source revision.
-		PI_LOCAL_RELEASE_USE_CHECKED_IN_MODELS=1 node scripts/local-release.mjs \
-			--out "$PI_BUILD_DIR" \
-			--force \
-			--skip-check \
-			--skip-test \
-			--skip-install
-	)
-	PI_PACKAGE_DIR="$PI_BUILD_DIR/tarballs"
-elif [ -d "$PI_PREBUILT_DIR" ]; then
-	PI_PACKAGE_DIR="$PI_PREBUILT_DIR"
-else
-	echo "✗ Trustable Pi fork is unavailable." >&2
-	echo "  Initialize recursively or provide $PI_PREBUILT_DIR." >&2
-	exit 1
-fi
-
-set -- \
-	"$PI_PACKAGE_DIR"/earendil-works-pi-ai-*.tgz \
-	"$PI_PACKAGE_DIR"/earendil-works-pi-tui-*.tgz \
-	"$PI_PACKAGE_DIR"/earendil-works-pi-agent-core-*.tgz \
-	"$PI_PACKAGE_DIR"/earendil-works-pi-storage-sqlite-node-*.tgz \
-	"$PI_PACKAGE_DIR"/earendil-works-pi-coding-agent-*.tgz
-if [ "$#" -ne 5 ]; then
-	echo "✗ Trustable Pi build did not produce exactly five package archives." >&2
-	exit 1
-fi
-for package in "$@"; do
-	if [ ! -f "$package" ]; then
-		echo "✗ Trustable Pi package is missing: $package" >&2
-		exit 1
-	fi
-done
-npm install -g --force $PREFIX_ARGS "$@"
-
 # Install the exact nested Trustable fork instead of resolving upstream
 # pi-acp from npm. In source/VM mode setup builds a package from the checked-out
 # submodule; image packaging supplies the same tarball next to setup.sh.
@@ -263,10 +236,6 @@ fi
 if [ -n "$PI_ACP_BUILD_DIR" ]; then
 	rm -rf "$PI_ACP_BUILD_DIR"
 fi
-if [ -n "$PI_BUILD_DIR" ]; then
-	rm -rf "$PI_BUILD_DIR"
-fi
-
 # Resolve the Pi binary from the prefix just populated instead of assuming the
 # caller has already refreshed PATH. This is required in fresh VM/image builds.
 PI_BIN="$INSTALL_PREFIX/bin/pi"
@@ -463,7 +432,7 @@ echo
 # Every spec is pinned, so the manifest is the record of what was installed;
 # querying the registry would report latest, not what actually landed.
 PACKAGE_COUNT=$(printf '%s\n' "$PACKAGES" | grep -c '^')
-echo "✓ Provisioned $((PACKAGE_COUNT + 5)) pinned packages (including the Trustable Pi and pi-acp forks)."
+echo "✓ Provisioned $((PACKAGE_COUNT + 1)) pinned packages (including integrity-verified upstream Pi and the Trustable pi-acp fork)."
 
 # ---------------------------------------------------------------------------
 # Phase 2 — build (only with a package.json in the current directory)

@@ -2,15 +2,15 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import { describe, expect, it } from "vitest";
 
-describe("setup.sh Trustable Pi forks", () => {
-	it("builds the nested forks or consumes packaged forks without npm fallbacks", async () => {
+describe("setup.sh Pi runtime sources", () => {
+	it("verifies upstream Pi and keeps only the pi-acp fork", async () => {
 		const setup = await readFile(join(process.cwd(), "setup.sh"), "utf8");
-		const piLocalRelease = await readFile(
-			join(process.cwd(), "pi", "scripts", "local-release.mjs"),
-			"utf8",
-		);
 		const versions = await readFile(
 			join(process.cwd(), "pi.version"),
+			"utf8",
+		);
+		const integrities = await readFile(
+			join(process.cwd(), "pi.integrity"),
 			"utf8",
 		);
 
@@ -30,20 +30,10 @@ describe("setup.sh Trustable Pi forks", () => {
 		expect(setup).toContain(
 			'"$SCRIPT_DIR/extensions/trustable-runtime.ts"',
 		);
-		expect(setup).toContain('PI_SOURCE_DIR="$SCRIPT_DIR/pi"');
+		expect(setup).toContain('INTEGRITY_FILE="$SCRIPT_DIR/pi.integrity"');
+		expect(setup).toContain('npm view "$spec" dist.integrity');
 		expect(setup).toContain(
-			'PI_PREBUILT_DIR="$SCRIPT_DIR/pi-packages"',
-		);
-		expect(setup).toContain("node scripts/local-release.mjs");
-		expect(setup).toContain("npm ci --ignore-scripts");
-		expect(setup).toContain(
-			"PI_LOCAL_RELEASE_USE_CHECKED_IN_MODELS=1",
-		);
-		expect(setup).toContain(
-			'"$PI_PACKAGE_DIR"/earendil-works-pi-storage-sqlite-node-*.tgz',
-		);
-		expect(setup).toContain(
-			'"$PI_PACKAGE_DIR"/earendil-works-pi-coding-agent-*.tgz',
+			'actual_integrity=$(npm view "$spec" dist.integrity)',
 		);
 		expect(setup).toContain(
 			'PI_MCP_ADAPTER_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/npm/node_modules/pi-mcp-adapter"',
@@ -64,19 +54,21 @@ describe("setup.sh Trustable Pi forks", () => {
 		expect(setup).toContain(
 			"this is the single allowed retry",
 		);
-		expect(piLocalRelease).toContain(
-			'{ directory: "packages/storage/sqlite-node", name: "@earendil-works/pi-storage-sqlite-node" }',
-		);
-		expect(piLocalRelease).toContain(
-			'pkg.directory === "packages/ai" ? "build:offline" : "build"',
-		);
-		expect(piLocalRelease).toContain(
-			'process.env.PI_LOCAL_RELEASE_USE_CHECKED_IN_MODELS !== "1"',
-		);
 		expect(versions).not.toMatch(/^pi-acp@/m);
-		expect(versions).not.toMatch(
-			/^@earendil-works\/pi-coding-agent@/m,
-		);
-		expect(setup).not.toContain("npm view");
+		for (const name of [
+			"pi-ai",
+			"pi-tui",
+			"pi-agent-core",
+			"pi-storage-sqlite-node",
+			"pi-coding-agent",
+		]) {
+			expect(versions).toContain(`@earendil-works/${name}@0.82.0`);
+			expect(integrities).toContain(
+				`@earendil-works/${name}@0.82.0 sha512-`,
+			);
+		}
+		expect(setup).not.toContain("PI_SOURCE_DIR");
+		expect(setup).not.toContain("PI_PREBUILT_DIR");
+		expect(setup).not.toContain("PI_LOCAL_RELEASE_USE_CHECKED_IN_MODELS");
 	});
 });

@@ -21,6 +21,30 @@ interface BeforeAgentStartEvent {
 	systemPrompt: string;
 }
 
+interface ManagedAgentMessage {
+	role: string;
+	content: Array<{
+		type: string;
+		text?: string;
+		thinking?: string;
+		[key: string]: unknown;
+	}>;
+	stopReason?: string;
+	errorMessage?: string;
+	[key: string]: unknown;
+}
+
+interface MessageEvent {
+	message: ManagedAgentMessage;
+}
+
+interface MessageUpdateEvent extends MessageEvent {
+	assistantMessageEvent: {
+		type: string;
+		[key: string]: unknown;
+	};
+}
+
 interface ToolCallEvent {
 	toolCallId: string;
 	toolName: string;
@@ -66,6 +90,7 @@ export type TrustableRedeployFetch = (
 
 interface ExtensionContext {
 	cwd: string;
+	abort(): void;
 }
 
 interface TrustableExtensionApi {
@@ -75,6 +100,30 @@ interface TrustableExtensionApi {
 			event: BeforeAgentStartEvent,
 			ctx: ExtensionContext,
 		) => Promise<{ systemPrompt: string } | undefined>,
+	): void;
+	on(
+		event: "message_start",
+		handler: (
+			event: MessageEvent,
+			ctx: ExtensionContext,
+		) => Promise<void> | void,
+	): void;
+	on(
+		event: "message_update",
+		handler: (
+			event: MessageUpdateEvent,
+			ctx: ExtensionContext,
+		) => Promise<void> | void,
+	): void;
+	on(
+		event: "message_end",
+		handler: (
+			event: MessageEvent,
+			ctx: ExtensionContext,
+		) =>
+			| Promise<{ message?: ManagedAgentMessage } | undefined>
+			| { message?: ManagedAgentMessage }
+			| undefined,
 	): void;
 	registerTool(tool: {
 		name: string;
@@ -107,6 +156,44 @@ interface TrustableExtensionApi {
 			{ content?: ToolResultEvent["content"]; details?: unknown; isError?: boolean } | undefined
 		>,
 	): void;
+}
+
+export const MANAGED_REPEATED_STREAM_ERROR =
+	"Agent stopped because the provider repeated the same streamed response.";
+
+export function managedRepeatedStreamTextDetected(
+	message: ManagedAgentMessage,
+	repetitions = 4,
+	windowWords = 32,
+): boolean {
+	if (repetitions < 2 || windowWords < 8) {
+		return false;
+	}
+	const words = message.content
+		.flatMap((entry) => (entry.type === "text" ? [entry.text ?? ""] : []))
+		.join(" ")
+		.toLocaleLowerCase()
+		.replace(/[^\p{L}\p{N}_-]+/gu, " ")
+		.trim()
+		.split(/\s+/)
+		.filter(Boolean);
+	if (words.length < repetitions * windowWords) {
+		return false;
+	}
+
+	// WHY: this is the fork's reviewed invariant moved to the upstream
+	// extension boundary. Exact normalized word windows ignore formatting
+	// deltas and avoid a global turn/step budget that would stop healthy runs.
+	const occurrences = new Map<string, number>();
+	for (let index = 0; index <= words.length - windowWords; index += 1) {
+		const signature = words.slice(index, index + windowWords).join(" ");
+		const count = (occurrences.get(signature) ?? 0) + 1;
+		if (count >= repetitions) {
+			return true;
+		}
+		occurrences.set(signature, count);
+	}
+	return false;
 }
 
 function nonEmptyString(value: unknown, field: string): string {
@@ -1137,6 +1224,7 @@ export default function trustableRuntimeExtension(
 	const listedMcpServers = new Set<string>();
 	const pendingAttempts = new Map<string, PendingToolAttempt>();
 	const semanticCircuit = new ManagedSemanticCircuit();
+	let repeatedStreamAborted = false;
 
 	pi.registerTool({
 		name: "trustable_runtime_status",
@@ -1221,6 +1309,43 @@ export default function trustableRuntimeExtension(
 		pendingAttempts.clear();
 		return {
 			systemPrompt: `${event.systemPrompt}\n\n${trustableRuntimeSystemPrompt(current)}`,
+		};
+	});
+
+	pi.on("message_start", (event) => {
+		if (event.message.role === "assistant") {
+			repeatedStreamAborted = false;
+		}
+	});
+
+	pi.on("message_update", (event, ctx) => {
+		if (
+			repeatedStreamAborted ||
+			event.message.role !== "assistant" ||
+			event.assistantMessageEvent.type !== "text_delta"
+		) {
+			return;
+		}
+		if (managedRepeatedStreamTextDetected(event.message)) {
+			repeatedStreamAborted = true;
+			// Upstream Pi routes this extension action to the active RPC abort
+			// handler. It cancels the current provider run without invalidating
+			// the durable session or imposing any budget on later turns.
+			ctx.abort();
+		}
+	});
+
+	pi.on("message_end", (event) => {
+		if (!repeatedStreamAborted || event.message.role !== "assistant") {
+			return undefined;
+		}
+		repeatedStreamAborted = false;
+		return {
+			message: {
+				...event.message,
+				stopReason: "error",
+				errorMessage: MANAGED_REPEATED_STREAM_ERROR,
+			},
 		};
 	});
 

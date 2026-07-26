@@ -17,9 +17,14 @@
 @openai/codex@0.144.6
 @agentclientprotocol/codex-acp@1.1.4
 
-# Pi CLI and its core packages are built from the pinned nested Trustable fork
-# by setup.sh. WHY: keeping an upstream npm entry here would silently bypass
-# the managed stream-loop protection implemented in the owned executable.
+# Pi CLI and core — exact upstream release. setup.sh verifies the five package
+# integrities recorded in pi.integrity before installing them as one lockstep
+# runtime. Trustable-specific stream protection lives in the managed extension.
+@earendil-works/pi-ai@0.82.0
+@earendil-works/pi-tui@0.82.0
+@earendil-works/pi-agent-core@0.82.0
+@earendil-works/pi-storage-sqlite-node@0.82.0
+@earendil-works/pi-coding-agent@0.82.0
 
 # Pi extensions — setup.sh registers these with `pi install`; a plain global
 # npm installation would put their files on disk without activating them.
