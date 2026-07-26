@@ -163,7 +163,9 @@ export const routes = {
 		// WHY: cwd is host-owned session state, not request data. This prevents
 		// the browser from turning shell mode into an arbitrary-directory API.
 		const cwd = ctx.host.activeSessionDirectory(body.sessionId);
-		return executeShellCommand({ command: body.command, cwd });
+		return ctx.host.redactSensitive(
+			await executeShellCommand({ command: body.command, cwd }),
+		);
 	},
 
 	"POST /api/session/load": async (

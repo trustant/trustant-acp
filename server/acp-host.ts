@@ -70,9 +70,11 @@ export function buildAgentConfig(
 		};
 	}
 
-	if (agent.id === "pi") {
-		const managed = resolveManagedPiRuntime(workingDirectory);
-		if (managed) {
+	const managed = resolveManagedPiRuntime(workingDirectory);
+	if (managed) {
+		base.mcpServers = managed.mcpServers;
+		base.redactionSecrets = managed.redactionSecrets;
+		if (agent.id === "pi") {
 			// WHY: only the server can turn the host-owned manifest into the
 			// typed piLaunch contract. The browser and config.json cannot supply
 			// extension paths or relax the selected workbench.
@@ -80,6 +82,15 @@ export function buildAgentConfig(
 				version: 1,
 				workbench: managed.workbench.workspace,
 				extensionPaths: [managed.extensionPath],
+			};
+			// Pi's adapter consumes the credential-free .mcp.json. It receives
+			// only the safe manifest path so trustable-mcp-launch can resolve
+			// host-owned credentials without exposing them to project files.
+			base.env = {
+				...base.env,
+				TRUSTABLE_MANAGED_RUNTIME: "1",
+				TRUSTABLE_RUNTIME_CONFIG: managed.runtimeConfigPath,
+				TRUSTABLE_PI_EXTENSION_PATH: managed.extensionPath,
 			};
 		}
 	}

@@ -36,6 +36,13 @@ The codebase is cleanly layered. ACP protocol handling is confined to `src/acp/`
 
 **Portable core (framework-agnostic):** `acp/type-converter.ts`, `acp/acp-handler.ts`, `acp/permission-handler.ts`; all of `types/`; pure `services/` (`message-state`, `message-sender`, `session-state`, `session-helpers`, `settings-normalizer`, `view-registry`); most `hooks/`; pure React (`PermissionBanner`, `TerminalBlock`, `SuggestionPopup`); `utils/logger`, `utils/text`.
 
+In Trustable-managed mode the Node host also owns MCP selection. It validates a
+credential-free workbench `.mcp.json` against the private mode-`0600`
+`mcpConfig` named by the runtime manifest. Codex and Claude receive those
+servers through ACP session parameters; Pi receives an empty ACP list and uses
+its managed proxy plus credential-free launcher descriptors. Generic
+`config.json` and browser requests cannot add commands.
+
 ## 3. Target architecture
 
 Two processes, one repo (monorepo or two build targets):
@@ -291,6 +298,27 @@ Process handling (all three constraints are load-bearing — see the comments in
   recursively (a single `pkill -P` misses the lower generations), and as a backstop
   cleanup reaps whatever still holds `$ACP_PORT` (looked up via `ss`, which reports
   PIDs for processes we own).
+
+### Managed MCP lifecycle and redaction
+
+`TRUSTABLE_RUNTIME_CONFIG` version 2 identifies a private `mcpConfig` outside
+the workbench. Its names must exactly match the credential-free `.mcp.json`.
+For Codex and Claude, `session/new`, `session/load`, `session/resume`, and
+`session/fork` carry the converted stdio/HTTP entries. Pi continues to use
+`pi-mcp-adapter`; secret-bearing stdio descriptors call the fixed
+`trustable-mcp-launch` host launcher.
+
+Only one agent process remains initialized. Selecting another agent disconnects
+the previous process tree first, which also closes its persistent Browser MCP.
+The Browser server serializes requests, preserves one page/context, rejects
+empty or stale captures, and performs deterministic signal cleanup.
+
+TruACP removes host config paths and service credential variables from the
+general Codex/Claude process environment. MCP values are injected only into the
+selected MCP child. Known values, sensitive fields, and credential-bearing URIs
+are recursively redacted from session updates and direct-shell REST results
+before browser display or persistence. The Pi policy extension additionally
+blocks direct reads or shell inspection of the private MCP config.
 
 The main loop polls the two watcher PIDs rather than using `wait -n`: under `set -e`
 a bare `wait -n` bypasses the trap when a child exits non-zero, while `wait -n || true`
@@ -554,8 +582,8 @@ server-side configuration. Browser requests cannot inject extension paths.
 
 In a Trustable-managed runtime, issue #57 adds a versioned host contract.
 TruACP reads `TRUSTABLE_RUNTIME_CONFIG`, validates its canonical workbench,
-exact generated `.mcp.json`, local development URL, browser-visible application
-URL, private watcher log, and the extension selected by
+exact credential-free `.mcp.json`, private `mcpConfig`, local development URL,
+browser-visible application URL, private watcher log, and the extension selected by
 `TRUSTABLE_PI_EXTENSION_PATH`, then includes
 only that validated path in `piLaunch.extensions.paths`. The manifest uses the
 version-2 `workbenches` envelope shared with Browser MCP. Managed mode fails
@@ -899,3 +927,26 @@ Both clean `trudev` setup and production image setup consume the same
 `pi.version`, `pi.integrity`, managed extension, and pinned `pi-acp` artifact.
 No build may depend on a local Pi checkout, unpublished object, cached tarball,
 or developer-machine path.
+## Header connection state
+
+- `Connecting...` describes only the interval before ACP exposes a usable
+  session.
+- Once the session is ready, the header remains connected while prompts,
+  notebook nodes, tools, or other general UI work are busy.
+
+## Streaming chat scroll
+
+- New streamed output follows the bottom only while the reader is already
+  within 80 pixels of it.
+- Scrolling upward preserves the reader's position across subsequent text,
+  reasoning, tool, permission, and notebook updates.
+- Returning near the bottom re-enables output following automatically.
+
+## Header actions
+
+- TruACP renders configuration, new-session, session-history, notebook, and
+  run-next actions as compact icon buttons.
+- Every icon action exposes the same descriptive accessible label through
+  `aria-label` and one native `title` tooltip. No second CSS tooltip is rendered.
+- Icon-only presentation does not change action availability, disabled state,
+  or click behavior.

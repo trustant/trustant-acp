@@ -91,13 +91,19 @@ body {
 	color: var(--accent);
 	font-weight: 500;
 }
-.topbar button.new-session-action {
-	/* WHY: session creation is a primary navigation action. Keep its complete
-	   label readable instead of allowing a narrow embedded pane to wrap it. */
-	min-width: 7.5rem;
-	padding-inline: 0.9rem;
-	font-weight: 600;
-	white-space: nowrap;
+.topbar button.icon-action {
+	position: relative;
+	display: inline-grid;
+	place-items: center;
+	flex: 0 0 auto;
+	width: 2.2rem;
+	height: 2.2rem;
+	padding: 0;
+	border-radius: 8px;
+}
+.topbar button.icon-action svg {
+	width: 1.15rem;
+	height: 1.15rem;
 }
 .topbar .notebook-toggle,
 .topbar .run-next {
@@ -479,18 +485,9 @@ body {
 
 /* Gear config button in the topbar */
 .topbar .gear {
-	font-size: 1rem;
-	line-height: 1;
-	padding: 0.3rem 0.5rem;
 	border: 1px solid var(--border);
-	border-radius: 6px;
 	background: var(--bg);
 	color: var(--text);
-	cursor: pointer;
-}
-.topbar .gear:disabled {
-	opacity: 0.5;
-	cursor: default;
 }
 
 /* Config / auth modals (pi endpoint, codex device-auth) */

@@ -67,6 +67,7 @@ describe("Trustable Pi runtime extension", () => {
 		const nested = join(workbench, "src");
 		const manifestPath = join(root, "runtime.json");
 		const watcherLog = join(root, "ops-ide-devel.log");
+		const mcpConfig = join(root, "mcp.json");
 		await mkdir(nested, { recursive: true });
 		await writeFile(
 			watcherLog,
@@ -89,6 +90,26 @@ describe("Trustable Pi runtime extension", () => {
 			}),
 		);
 		await writeFile(
+			mcpConfig,
+			JSON.stringify({
+				mcpServers: {
+					openserverless: {
+						type: "stdio",
+						command: "openserverless-mcp",
+					},
+					browser: {
+						type: "stdio",
+						command: "trustable-browser-mcp",
+					},
+					mongodb: {
+						type: "stdio",
+						command: "mongodb-mcp-server",
+					},
+				},
+			}),
+			{ mode: 0o600 },
+		);
+		await writeFile(
 			manifestPath,
 			JSON.stringify({
 				version: 2,
@@ -103,6 +124,7 @@ describe("Trustable Pi runtime extension", () => {
 							"browser",
 							"openserverless",
 						],
+						mcpConfig,
 						watcherLog,
 					},
 				],

@@ -70,6 +70,10 @@ export interface AgentConfig {
 		workbench: string;
 		extensionPaths: string[];
 	};
+	/** Host-selected MCP servers passed over ACP to non-Pi agents. */
+	mcpServers?: acp.McpServer[];
+	/** Values removed from model-visible ACP/session output by the Node host. */
+	redactionSecrets?: string[];
 }
 
 function pathIsWithin(root: string, target: string): boolean {
@@ -111,6 +115,17 @@ export function buildPiSessionRequestMeta(
 			},
 		},
 	};
+}
+
+// Pi owns MCP through its pinned adapter and credential-free .mcp.json.
+// Codex/Claude instead receive the same private host-selected servers through
+// ACP session parameters, which keeps credentials out of project files and
+// prevents agents from launching one-shot MCP processes manually.
+export function buildSessionMcpServers(
+	config: AgentConfig | null,
+): acp.McpServer[] {
+	if (!config || config.id === "pi") return [];
+	return config.mcpServers ?? [];
 }
 
 /**
@@ -221,8 +236,26 @@ export class AcpClient {
 		);
 
 		// Prepare environment variables
+		const inheritedEnv: NodeJS.ProcessEnv = { ...process.env };
+		// WHY: these variables point at host-owned policy/configuration. Codex
+		// and Claude receive only the explicit MCP session contract; inheriting
+		// the host paths would let ordinary agent shell commands bypass it.
+		for (const name of [
+			"TRUSTABLE_RUNTIME_CONFIG",
+			"TRUSTABLE_PI_EXTENSION_PATH",
+			"TRUSTABLE_MCP_CONFIG",
+			"DATABASE_URI",
+			"MDB_MCP_CONNECTION_STRING",
+			"MONGODB_URI",
+			"REDIS_PWD",
+			"AWS_ACCESS_KEY_ID",
+			"AWS_SECRET_ACCESS_KEY",
+			"MILVUS_TOKEN",
+		]) {
+			delete inheritedEnv[name];
+		}
 		let baseEnv: NodeJS.ProcessEnv = {
-			...process.env,
+			...inheritedEnv,
 			...(config.env || {}),
 		};
 
@@ -558,7 +591,7 @@ export class AcpClient {
 
 			const response = await connection.agent.request("session/new", {
 				cwd: this.toSessionCwd(workingDirectory),
-				mcpServers: [],
+				mcpServers: buildSessionMcpServers(this.currentConfig),
 				...this.sessionRequestMeta(workingDirectory),
 			});
 
@@ -1007,7 +1040,7 @@ export class AcpClient {
 			const response = await connection.agent.request("session/load", {
 				sessionId,
 				cwd: this.toSessionCwd(cwd),
-				mcpServers: [],
+				mcpServers: buildSessionMcpServers(this.currentConfig),
 				...this.sessionRequestMeta(cwd),
 			});
 
@@ -1048,7 +1081,7 @@ export class AcpClient {
 			const response = await connection.agent.request("session/resume", {
 				sessionId,
 				cwd: this.toSessionCwd(cwd),
-				mcpServers: [],
+				mcpServers: buildSessionMcpServers(this.currentConfig),
 				...this.sessionRequestMeta(cwd),
 			});
 
@@ -1083,7 +1116,7 @@ export class AcpClient {
 			const response = await connection.agent.request("session/fork", {
 				sessionId,
 				cwd: this.toSessionCwd(cwd),
-				mcpServers: [],
+				mcpServers: buildSessionMcpServers(this.currentConfig),
 				...this.sessionRequestMeta(cwd),
 			});
 

@@ -56,6 +56,9 @@ import {
 	formatShellResult,
 	READY_COMPOSER_PLACEHOLDER,
 } from "./shell-command";
+import { headerConnectionState } from "./connection-status";
+import { isChatNearBottom } from "./chat-scroll";
+import { HeaderActionButton } from "./HeaderActionButton";
 
 // ---- view model -----------------------------------------------------------
 
@@ -217,8 +220,10 @@ export function ChatApp(): React.ReactElement {
 	const configReconcileRef = useRef(false);
 	const activityStartedAtRef = useRef<number | null>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const followOutputRef = useRef(true);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const promptHistoryRef = useRef(createPromptHistoryCursor());
+	const connectionState = headerConnectionState(ready, busy);
 
 	const userPrompts = useMemo(
 		() =>
@@ -267,10 +272,16 @@ export function ChatApp(): React.ReactElement {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	// Auto-scroll on new content.
+	const handleChatScroll = useCallback(() => {
+		const el = scrollRef.current;
+		if (el) followOutputRef.current = isChatNearBottom(el);
+	}, []);
+
+	// Follow streamed output only while the reader remains near the bottom.
+	// Scrolling upward pauses the follow mode until they return there.
 	useEffect(() => {
 		const el = scrollRef.current;
-		if (el) el.scrollTop = el.scrollHeight;
+		if (el && followOutputRef.current) el.scrollTop = el.scrollHeight;
 	}, [turns, permission, notebook]);
 
 	// WHY: provider silence is normal during long reasoning. A local elapsed
@@ -1576,9 +1587,9 @@ export function ChatApp(): React.ReactElement {
 						</option>
 					))}
 				</select>
-				{busy ? (
+				{connectionState === "connecting" ? (
 					<span className="status">Connecting…</span>
-				) : ready ? (
+				) : connectionState === "connected" ? (
 					<span className="status">● {agentName}</span>
 				) : null}
 				{/* Model selector (config options exposed after connect). */}
@@ -1626,49 +1637,48 @@ export function ChatApp(): React.ReactElement {
 				{((agentId === "pi" && piManaged === false) ||
 					agentId === "codex" ||
 					agentId === "claude") && (
-					<button
+					<HeaderActionButton
+						icon="settings"
 						className="gear"
-						title={
+						label={
 							agentId === "codex" || agentId === "claude"
-								? "Renew login"
-								: "Reconfigure endpoint"
+								? `Renew ${agentName} login`
+								: "Reconfigure Pi endpoint"
 						}
 						disabled={busy || running}
 						onClick={() => void openConfig()}
-					>
-						⚙
-					</button>
+					/>
 				)}
 				{ready && (
 					<>
-						<button
+						<HeaderActionButton
+							icon="new-session"
+							label="New session"
 							className="secondary header-action new-session-action"
-							title="Start a new session"
 							disabled={busy || running}
 							onClick={() => void newChat()}
-						>
-							New session
-						</button>
+						/>
 						{agentId === "pi" && (
-							<button
+							<HeaderActionButton
+								icon="history"
+								label="Resume session"
 								className="secondary header-action"
-								title="Resume a Pi session"
 								disabled={busy || running}
 								onClick={() => void openHistory()}
-							>
-								Sessions
-							</button>
+							/>
 						)}
 					</>
 				)}
-				<button
+				<HeaderActionButton
+					icon="notebook"
+					label="Open notebook"
 					className="notebook-toggle"
 					disabled={notebookBusy}
 					onClick={openNotebookPanel}
-				>
-					Notebook
-				</button>
-				<button
+				/>
+				<HeaderActionButton
+					icon="run-next"
+					label="Run next notebook node"
 					className="run-next"
 					disabled={
 						!ready ||
@@ -1677,9 +1687,7 @@ export function ChatApp(): React.ReactElement {
 						!notebook?.selectedNodeId
 					}
 					onClick={runNextNotebookNode}
-				>
-					Run next
-				</button>
+				/>
 			</header>
 
 			{notebookPanelOpen && (
@@ -1999,7 +2007,11 @@ export function ChatApp(): React.ReactElement {
 				</div>
 			)}
 
-			<div className="messages" ref={scrollRef}>
+			<div
+				className="messages"
+				ref={scrollRef}
+				onScroll={handleChatScroll}
+			>
 				{turns.map((t) => (
 					<TurnView key={t.id} turn={t} />
 				))}

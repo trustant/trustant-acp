@@ -14,6 +14,7 @@ export interface TrustableRuntimeWorkbench {
 	developmentUrl: string;
 	browserUrl: string;
 	requiredMcpServers: string[];
+	mcpConfig?: string;
 	watcherLog: string;
 }
 
@@ -292,6 +293,18 @@ export function loadTrustableRuntimeManifest(
 					`Trustable runtime workbenches[${index}].watcherLog must remain outside the workbench`,
 				);
 			}
+			const mcpConfig = canonicalPrivateFile(
+				nonEmptyString(
+					record.mcpConfig,
+					`workbenches[${index}].mcpConfig`,
+				),
+				`workbenches[${index}].mcpConfig`,
+			);
+			if (pathIsWithin(workspace, mcpConfig)) {
+				throw new Error(
+					`Trustable runtime workbenches[${index}].mcpConfig must remain outside the workbench`,
+				);
+			}
 			return {
 				app: nonEmptyString(record.app, `workbenches[${index}].app`),
 				workspace,
@@ -307,6 +320,7 @@ export function loadTrustableRuntimeManifest(
 					record.requiredMcpServers,
 					index,
 				),
+				mcpConfig,
 				watcherLog,
 			};
 		},
@@ -496,6 +510,7 @@ export function trustableRuntimeSystemPrompt(
 		`  Browser-visible application URL: ${workbench.browserUrl}`,
 		`  Required MCP servers: ${workbench.requiredMcpServers.join(", ")}`,
 		"  Operate only inside the declared workbench.",
+		"  MCP discovery is host-managed and credential-free. Never read the private MCP config, inspect managed-process environments, or start MCP server commands manually.",
 		"  Before application work, complete the mandatory MCP bootstrap with either sequence: (a) call mcp({}) once, then mcp({server:\"<name>\"}) for every required server listed above; or (b) call mcp({connect:\"<name>\"}) for every required server. A successful connect is stronger evidence and satisfies both proxy reachability and that server's tool discovery. Use the exact tool names and schemas returned by those calls. Do not infer tool availability from memory or repository prose.",
 		"  Treat service MCPs as discovery and read-only verification interfaces. Application schemas, seed data, and writes belong in reproducible setup/actions created through the OpenServerless MCP, never in direct service-MCP repair calls.",
 		"  Run the deterministic React MCP react_validate after frontend mutations and before Browser MCP verification. Agentic React is optional selection context, not source validation.",
@@ -532,10 +547,16 @@ function redactWatcherLog(value: string): string {
 		);
 }
 
-function isSecretPath(path: string, workspace: string): boolean {
+function isSecretPath(
+	path: string,
+	workspace: string,
+	privateMcpConfig?: string,
+): boolean {
 	const absolute = isAbsolute(path) ? resolve(path) : resolve(workspace, path);
 	const name = basename(absolute);
 	return (
+		(privateMcpConfig !== undefined &&
+			resolve(absolute) === resolve(privateMcpConfig)) ||
 		name === ".env" ||
 		name.startsWith(".env.") ||
 		absolute.includes(`${sep}.trustable${sep}secrets${sep}`)
@@ -555,11 +576,12 @@ export function managedSecretAccessBlockReason(
 	input: Record<string, unknown>,
 	workspace: string,
 	knownServers: string[] = [],
+	privateMcpConfig?: string,
 ): string | undefined {
 	if (
 		(toolName === "read" || toolName === "write" || toolName === "edit") &&
 		typeof input.path === "string" &&
-		isSecretPath(input.path, workspace)
+		isSecretPath(input.path, workspace, privateMcpConfig)
 	) {
 		return "Trustable blocked direct application env access. Only the user may change .env values through the Trustable configuration interface; report the missing variable without reading or modifying the file.";
 	}
@@ -571,6 +593,26 @@ export function managedSecretAccessBlockReason(
 		)
 	) {
 		return "Trustable blocked shell access to an application env file. Only the user may change environment values through the Trustable configuration interface.";
+	}
+	if (
+		(toolName === "bash" || toolName === "shell") &&
+		typeof input.command === "string" &&
+		((privateMcpConfig !== undefined &&
+			input.command.includes(privateMcpConfig)) ||
+			/TRUSTABLE_(?:RUNTIME|MCP)_CONFIG|\.config\/trustable\/runtime\/[^\s"']*mcp\.json/i.test(
+				input.command,
+			))
+	) {
+		return "Trustable blocked access to host-private MCP configuration. Use the managed MCP tools and credential-free server list; never inspect or launch their private process configuration.";
+	}
+	if (
+		(toolName === "bash" || toolName === "shell") &&
+		typeof input.command === "string" &&
+		/(?:^|[;&|]\s*|\b(?:exec|env|timeout|command)\s+)(?:trustable-mcp-launch|trustable-browser-mcp|trustable-react-mcp|openserverless-mcp|postgres-mcp|redis-mcp-server|mcp-server-milvus|mongodb-mcp-server|mcp-s3)\b/m.test(
+			input.command,
+		)
+	) {
+		return "Trustable blocked direct startup of a managed MCP server. Use the host-selected MCP tools so lifecycle, ordering, reconnection, and credential injection remain managed.";
 	}
 	const invocation = managedMcpInvocation(toolName, input, knownServers);
 	if (
@@ -1361,6 +1403,7 @@ export default function trustableRuntimeExtension(
 			event.input,
 			current.workspace,
 			current.requiredMcpServers,
+			current.mcpConfig,
 		);
 		if (secretBlockReason) {
 			return { block: true, reason: secretBlockReason };
