@@ -17,6 +17,14 @@ import type {
 } from "../src/types/session";
 import type { PromptContent, ChatMessage } from "../src/types/chat";
 import type { WsEvent } from "../server/protocol";
+import type {
+	NotebookDocumentResponse,
+	NotebookIndexEntry,
+	NotebookIndexResponse,
+	NotebookMutationResponse,
+	NotebookSessionState,
+} from "../src/types/notebook";
+import type { ShellExecutionResult } from "../server/shell-executor";
 
 export interface AgentInfo {
 	id: string;
@@ -116,6 +124,20 @@ export class AcpTransport {
 
 	async cancel(sessionId: string): Promise<void> {
 		await this.call("/api/session/cancel", { sessionId });
+	}
+
+	/**
+	 * Execute in the server-owned cwd for this active session. Deliberately no
+	 * cwd argument: browser code must not select a filesystem execution scope.
+	 */
+	async executeShell(
+		sessionId: string,
+		command: string,
+	): Promise<ShellExecutionResult> {
+		return this.call<ShellExecutionResult>("/api/session/shell", {
+			sessionId,
+			command,
+		});
 	}
 
 	async loadSession(
@@ -228,6 +250,84 @@ export class AcpTransport {
 
 	async deleteSession(sessionId: string): Promise<void> {
 		await this.call("/api/sessions/delete", { sessionId });
+	}
+
+	async loadNotebookSession(
+		sessionId: string,
+	): Promise<NotebookSessionState | null> {
+		const { state } = await this.call<{
+			state: NotebookSessionState | null;
+		}>("/api/sessions/notebook/get", { sessionId });
+		return state;
+	}
+
+	async saveNotebookSession(
+		sessionId: string,
+		state: NotebookSessionState,
+	): Promise<void> {
+		await this.call("PUT /api/sessions/notebook", { sessionId, state });
+	}
+
+	// ---- GitHub-backed notebooks ------------------------------------------
+
+	async listNotebooks(
+		repository: string,
+		ref: string,
+	): Promise<NotebookIndexResponse> {
+		return this.call("/api/notebooks/index", { repository, ref });
+	}
+
+	async loadNotebook(
+		index: NotebookIndexResponse,
+		entry: NotebookIndexEntry,
+	): Promise<NotebookDocumentResponse> {
+		return this.call("/api/notebooks/load", {
+			repository: index.source.repository,
+			ref: index.source.ref,
+			name: entry.name,
+			path: entry.path,
+			readmeSha: index.readmeSha,
+		});
+	}
+
+	async saveNotebook(
+		state: NotebookSessionState,
+		prompts: string[],
+	): Promise<{ sha: string; hasToken: boolean }> {
+		return this.call("PUT /api/notebooks/save", {
+			repository: state.source.repository,
+			ref: state.source.ref,
+			path: state.path,
+			sha: state.fileSha,
+			prompts,
+		});
+	}
+
+	async addNotebook(
+		index: NotebookIndexResponse,
+		name: string,
+		path: string,
+	): Promise<NotebookMutationResponse> {
+		return this.call("/api/notebooks/add", {
+			repository: index.source.repository,
+			ref: index.source.ref,
+			readmeSha: index.readmeSha,
+			name,
+			path,
+			prompts: ["New prompt"],
+		});
+	}
+
+	async removeNotebook(
+		index: NotebookIndexResponse,
+		entry: NotebookIndexEntry,
+	): Promise<NotebookMutationResponse> {
+		return this.call("/api/notebooks/remove", {
+			repository: index.source.repository,
+			ref: index.source.ref,
+			readmeSha: index.readmeSha,
+			path: entry.path,
+		});
 	}
 
 	// ---- per-agent config + auth (endpoint/login popups) ------------------

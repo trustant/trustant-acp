@@ -6,6 +6,7 @@ import {
 	loadTrustableRuntimeManifest,
 	isManagedActionMutation,
 	ManagedSemanticCircuit,
+	MANAGED_REPEATED_STREAM_ERROR,
 	managedAttemptSignature,
 	managedBootstrapBlockReason,
 	managedCheckerCommandBlockReason,
@@ -13,6 +14,7 @@ import {
 	managedActionWasCreated,
 	managedMcpInvocation,
 	managedRedeployVerificationBlockReason,
+	managedRepeatedStreamTextDetected,
 	managedSecretAccessBlockReason,
 	managedServiceMcpMutationBlockReason,
 	managedShellCommandBlockReason,
@@ -25,12 +27,47 @@ import {
 } from "../extensions/trustable-runtime";
 
 describe("Trustable Pi runtime extension", () => {
+	it("moves the provider repetition guard to upstream Pi's extension boundary", () => {
+		const phrase = Array.from(
+			{ length: 32 },
+			(_value, index) => `guard-word-${index}`,
+		).join(" ");
+		const repeated = {
+			role: "assistant",
+			content: [
+				{
+					type: "text",
+					text: Array.from({ length: 4 }, () => phrase).join(" "),
+				},
+			],
+		};
+		expect(managedRepeatedStreamTextDetected(repeated)).toBe(true);
+		expect(MANAGED_REPEATED_STREAM_ERROR).toContain(
+			"repeated the same streamed response",
+		);
+
+		const healthy = {
+			role: "assistant",
+			content: [
+				{
+					type: "text",
+					text: Array.from(
+						{ length: 301 },
+						(_value, index) => `healthy-turn-${index}`,
+					).join(" "),
+				},
+			],
+		};
+		expect(managedRepeatedStreamTextDetected(healthy)).toBe(false);
+	});
+
 	it("revalidates the host manifest and standard MCP config inside Pi", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runtime-extension-"));
 		const workbench = join(root, "workbench");
 		const nested = join(workbench, "src");
 		const manifestPath = join(root, "runtime.json");
 		const watcherLog = join(root, "ops-ide-devel.log");
+		const mcpConfig = join(root, "mcp.json");
 		await mkdir(nested, { recursive: true });
 		await writeFile(
 			watcherLog,
@@ -53,6 +90,26 @@ describe("Trustable Pi runtime extension", () => {
 			}),
 		);
 		await writeFile(
+			mcpConfig,
+			JSON.stringify({
+				mcpServers: {
+					openserverless: {
+						type: "stdio",
+						command: "openserverless-mcp",
+					},
+					browser: {
+						type: "stdio",
+						command: "trustable-browser-mcp",
+					},
+					mongodb: {
+						type: "stdio",
+						command: "mongodb-mcp-server",
+					},
+				},
+			}),
+			{ mode: 0o600 },
+		);
+		await writeFile(
 			manifestPath,
 			JSON.stringify({
 				version: 2,
@@ -67,6 +124,7 @@ describe("Trustable Pi runtime extension", () => {
 							"browser",
 							"openserverless",
 						],
+						mcpConfig,
 						watcherLog,
 					},
 				],

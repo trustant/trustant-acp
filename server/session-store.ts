@@ -14,6 +14,8 @@ import { readFile, writeFile, mkdir, rm } from "fs/promises";
 import { join, isAbsolute, resolve } from "path";
 import type { ChatMessage, MessageContent } from "../src/types/chat";
 import type { SavedSessionInfo } from "../src/types/session";
+import type { NotebookSessionState } from "../src/types/notebook";
+import { normalizeNotebookSessionState } from "../src/services/notebook";
 
 /** Maximum number of saved sessions to keep (mirrors the plugin). */
 const MAX_SAVED_SESSIONS = 50;
@@ -35,9 +37,11 @@ export class SessionStore {
 	private readonly dataDir: string;
 	private readonly indexPath: string;
 	private readonly sessionsDir: string;
+	private readonly notebooksDir: string;
 
 	/** Serializes index writes to avoid lost updates under concurrency. */
 	private writeLock: Promise<void> = Promise.resolve();
+	private readonly notebookWriteLocks = new Map<string, Promise<void>>();
 
 	constructor(dataDir: string) {
 		this.dataDir = isAbsolute(dataDir)
@@ -45,6 +49,7 @@ export class SessionStore {
 			: resolve(process.cwd(), dataDir);
 		this.indexPath = join(this.dataDir, "sessions.json");
 		this.sessionsDir = join(this.dataDir, "sessions");
+		this.notebooksDir = join(this.dataDir, "notebooks");
 	}
 
 	// ---- metadata index ----------------------------------------------------
@@ -111,6 +116,7 @@ export class SessionStore {
 			sessions.filter((s) => s.sessionId !== sessionId),
 		);
 		await this.deleteSessionMessages(sessionId);
+		await this.deleteNotebookState(sessionId);
 	}
 
 	// ---- message history ---------------------------------------------------
@@ -174,5 +180,63 @@ export class SessionStore {
 
 	async deleteSessionMessages(sessionId: string): Promise<void> {
 		await rm(this.sessionFilePath(sessionId), { force: true });
+	}
+
+	// ---- notebook session sidecars ----------------------------------------
+
+	private notebookFilePath(sessionId: string): string {
+		const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, "_");
+		return join(this.notebooksDir, `${safeId}.json`);
+	}
+
+	async saveNotebookState(
+		sessionId: string,
+		state: NotebookSessionState,
+	): Promise<void> {
+		const normalized = normalizeNotebookSessionState(state);
+		const previous =
+			this.notebookWriteLocks.get(sessionId) ?? Promise.resolve();
+		const write = previous.catch(() => {}).then(async () => {
+			await mkdir(this.notebooksDir, { recursive: true });
+			await writeFile(
+				this.notebookFilePath(sessionId),
+				JSON.stringify(normalized, null, 2),
+			);
+		});
+		this.notebookWriteLocks.set(sessionId, write);
+		try {
+			await write;
+		} finally {
+			if (this.notebookWriteLocks.get(sessionId) === write) {
+				this.notebookWriteLocks.delete(sessionId);
+			}
+		}
+	}
+
+	async loadNotebookState(
+		sessionId: string,
+	): Promise<NotebookSessionState | null> {
+		try {
+			const value = JSON.parse(
+				await readFile(this.notebookFilePath(sessionId), "utf8"),
+			);
+			return normalizeNotebookSessionState(value);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+			if (error instanceof SyntaxError) return null;
+			throw error;
+		}
+	}
+
+	async cloneNotebookState(
+		sourceSessionId: string,
+		targetSessionId: string,
+	): Promise<void> {
+		const state = await this.loadNotebookState(sourceSessionId);
+		if (state) await this.saveNotebookState(targetSessionId, state);
+	}
+
+	async deleteNotebookState(sessionId: string): Promise<void> {
+		await rm(this.notebookFilePath(sessionId), { force: true });
 	}
 }

@@ -8,6 +8,7 @@
  */
 import { readFileSync, realpathSync, statSync } from "fs";
 import { isAbsolute, join, relative, resolve } from "path";
+import type { McpServer } from "@agentclientprotocol/sdk";
 
 export const TRUSTABLE_PI_RUNTIME_VERSION = 2 as const;
 
@@ -17,6 +18,7 @@ export interface TrustablePiRuntimeWorkbench {
 	developmentUrl: string;
 	browserUrl: string;
 	requiredMcpServers: string[];
+	mcpConfig: string;
 	watcherLog: string;
 }
 
@@ -28,6 +30,9 @@ export interface TrustablePiRuntimeManifest {
 export interface ManagedPiRuntime {
 	workbench: TrustablePiRuntimeWorkbench;
 	extensionPath: string;
+	mcpServers: McpServer[];
+	redactionSecrets: string[];
+	runtimeConfigPath: string;
 }
 
 function nonEmptyString(value: unknown, field: string): string {
@@ -148,12 +153,25 @@ function parseManifest(path: string): TrustablePiRuntimeManifest {
 					`Trustable runtime workbenches[${index}].watcherLog must remain outside the workbench`,
 				);
 			}
+			const mcpConfig = canonicalPrivateFile(
+				nonEmptyString(
+					workbench.mcpConfig,
+					`workbenches[${index}].mcpConfig`,
+				),
+				`workbenches[${index}].mcpConfig`,
+			);
+			if (isPathWithin(workspace, mcpConfig)) {
+				throw new Error(
+					`Trustable runtime workbenches[${index}].mcpConfig must remain outside the workbench`,
+				);
+			}
 			return {
 				app,
 				workspace,
 				developmentUrl,
 				browserUrl,
 				requiredMcpServers,
+				mcpConfig,
 				watcherLog,
 			};
 		},
@@ -237,6 +255,135 @@ function assertRequiredMcpServers(
 			`Managed MCP config is missing required servers: ${missing.join(", ")}`,
 		);
 	}
+	const expected = new Set(workbench.requiredMcpServers);
+	const unexpected = [...configured].filter((name) => !expected.has(name));
+	if (unexpected.length > 0) {
+		throw new Error(
+			`Managed MCP config contains unexpected servers: ${unexpected.join(", ")}`,
+		);
+	}
+}
+
+function stringArray(value: unknown, field: string): string[] {
+	if (
+		value === undefined ||
+		(Array.isArray(value) &&
+			value.every((entry) => typeof entry === "string"))
+	) {
+		return (value as string[] | undefined) ?? [];
+	}
+	throw new Error(`Managed MCP ${field} must be an array of strings`);
+}
+
+function stringRecord(
+	value: unknown,
+	field: string,
+): Record<string, string> {
+	if (value === undefined) return {};
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		throw new Error(`Managed MCP ${field} must be a string map`);
+	}
+	const result: Record<string, string> = {};
+	for (const [key, entry] of Object.entries(value)) {
+		if (typeof entry !== "string") {
+			throw new Error(`Managed MCP ${field}.${key} must be a string`);
+		}
+		result[key] = entry;
+	}
+	return result;
+}
+
+function sensitiveValues(
+	env: Record<string, string>,
+	args: string[],
+): string[] {
+	const values = new Set<string>();
+	for (const [name, value] of Object.entries(env)) {
+		if (
+			value.length >= 4 &&
+			/(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|credential|uri|connection)/i.test(
+				name,
+			)
+		) {
+			values.add(value);
+		}
+		if (/^[a-z][a-z0-9+.-]*:\/\/[^/\s]+:[^@\s]+@/i.test(value)) {
+			values.add(value);
+		}
+	}
+	for (let index = 0; index < args.length - 1; index++) {
+		if (
+			/^--?.*(?:password|secret|token|api[_-]?key|credential)$/i.test(
+				args[index],
+			) &&
+			args[index + 1].length >= 4
+		) {
+			values.add(args[index + 1]);
+		}
+	}
+	return [...values].sort((left, right) => right.length - left.length);
+}
+
+function readManagedMcpServers(
+	workbench: TrustablePiRuntimeWorkbench,
+): { servers: McpServer[]; secrets: string[] } {
+	let raw: unknown;
+	try {
+		raw = JSON.parse(readFileSync(workbench.mcpConfig, "utf8"));
+	} catch (error) {
+		throw new Error(
+			`Failed to read private managed MCP config: ${(error as Error).message}`,
+		);
+	}
+	const entries =
+		raw && typeof raw === "object" && !Array.isArray(raw)
+			? (raw as { mcpServers?: unknown }).mcpServers
+			: undefined;
+	if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+		throw new Error("Private managed MCP config has no mcpServers object");
+	}
+	const record = entries as Record<string, unknown>;
+	const configured = Object.keys(record).sort();
+	const expected = [...workbench.requiredMcpServers].sort();
+	if (
+		configured.length !== expected.length ||
+		configured.some((name, index) => name !== expected[index])
+	) {
+		throw new Error(
+			"Private managed MCP config does not match the credential-free server manifest",
+		);
+	}
+
+	const secrets = new Set<string>();
+	const servers = expected.map((name): McpServer => {
+		const value = record[name];
+		if (!value || typeof value !== "object" || Array.isArray(value)) {
+			throw new Error(`Managed MCP server ${name} must be an object`);
+		}
+		const server = value as Record<string, unknown>;
+		if (server.type === "http") {
+			const url = validHttpUrl(server.url, `MCP server ${name}.url`);
+			return { type: "http", name, url, headers: [] };
+		}
+		if (server.type !== "stdio" || typeof server.command !== "string") {
+			throw new Error(
+				`Managed MCP server ${name} must use stdio or HTTP`,
+			);
+		}
+		const args = stringArray(server.args, `${name}.args`);
+		const env = stringRecord(server.env, `${name}.env`);
+		for (const secret of sensitiveValues(env, args)) secrets.add(secret);
+		return {
+			name,
+			command: server.command,
+			args,
+			env: Object.entries(env).map(([envName, value]) => ({
+				name: envName,
+				value,
+			})),
+		};
+	});
+	return { servers, secrets: [...secrets] };
 }
 
 function canonicalExtensionPath(path: string): string {
@@ -275,7 +422,8 @@ export function resolveManagedPiRuntime(
 		env.TRUSTABLE_RUNTIME_CONFIG,
 		"manifest path",
 	);
-	const manifest = parseManifest(resolve(manifestPath));
+	const runtimeConfigPath = resolve(manifestPath);
+	const manifest = parseManifest(runtimeConfigPath);
 	const canonicalWorkingDirectory = canonicalDirectory(
 		workingDirectory,
 		"working directory",
@@ -293,5 +441,12 @@ export function resolveManagedPiRuntime(
 	const extensionPath = canonicalExtensionPath(
 		nonEmptyString(env.TRUSTABLE_PI_EXTENSION_PATH, "extension path"),
 	);
-	return { workbench, extensionPath };
+	const managedMcp = readManagedMcpServers(workbench);
+	return {
+		workbench,
+		extensionPath,
+		mcpServers: managedMcp.servers,
+		redactionSecrets: managedMcp.secrets,
+		runtimeConfigPath,
+	};
 }

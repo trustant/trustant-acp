@@ -18,12 +18,16 @@ import {
 } from "./config-store";
 import { buildRuntime, buildAgentConfig } from "./acp-host";
 import type { WsEvent } from "./protocol";
+import { resolve } from "node:path";
+import { redactSensitiveValue } from "./redaction";
 
 /** Sink for server→client events (the WS broadcast). */
 export type EventSink = (event: WsEvent) => void;
 
 export class SessionHost {
 	private readonly clients = new Map<string, AcpClient>();
+	private readonly sessionDirectories = new Map<string, string>();
+	private readonly redactionSecrets = new Map<string, string[]>();
 	private readonly runtime: AcpRuntimeConfig;
 	/**
 	 * Runtime override of the default cwd, set by `setProjectDir` (POST
@@ -66,7 +70,13 @@ export class SessionHost {
 		if (!client) {
 			client = new AcpClient(this.runtime);
 			client.onSessionUpdate((update: SessionUpdate) =>
-				this.emit({ type: "sessionUpdate", update }),
+				this.emit({
+					type: "sessionUpdate",
+					update: redactSensitiveValue(
+						update,
+						this.redactionSecrets.get(agentId) ?? [],
+					),
+				}),
 			);
 			this.clients.set(agentId, client);
 		}
@@ -82,9 +92,33 @@ export class SessionHost {
 		const agent = findConfigAgent(this.config, agentId);
 		if (!agent) throw new Error(`Unknown agent "${agentId}"`);
 
-		const client = this.getClient(agentId);
 		const workingDir = cwd ?? this.projectDir();
-		return client.initialize(buildAgentConfig(agent, workingDir));
+		const agentConfig = buildAgentConfig(agent, workingDir);
+		this.redactionSecrets.set(
+			agentId,
+			agentConfig.redactionSecrets ?? [],
+		);
+
+		// WHY: Browser MCP owns stateful page/context resources. Keeping an
+		// initialized client for a previously selected agent would leave a
+		// competing browser owner alive after an agent switch.
+		await Promise.all(
+			[...this.clients.entries()]
+				.filter(([id]) => id !== agentId)
+				.map(async ([id, client]) => {
+					await client.disconnect().catch(() => {});
+					this.clients.delete(id);
+					this.redactionSecrets.delete(id);
+				}),
+		);
+		const client = this.getClient(agentId);
+		return client.initialize(agentConfig);
+	}
+
+	/** Redact host-known MCP credentials before REST output is persisted. */
+	redactSensitive<T>(value: T): T {
+		const secrets = [...this.redactionSecrets.values()].flat();
+		return redactSensitiveValue(value, secrets);
 	}
 
 	/**
@@ -119,6 +153,28 @@ export class SessionHost {
 	}
 
 	/**
+	 * Bind a session to the cwd used by its ACP create/load operation.
+	 *
+	 * WHY: shell passthrough must never trust a browser-provided filesystem
+	 * path. Keeping this association beside the live ACP clients lets the server
+	 * derive the active project's cwd from the session id alone.
+	 */
+	bindSessionDirectory(sessionId: string, cwd: string): void {
+		this.sessionDirectories.set(sessionId, resolve(cwd));
+	}
+
+	/** Resolve the cwd only when the requested session is currently active. */
+	activeSessionDirectory(sessionId: string): string {
+		const active = [...this.clients.values()].some(
+			(client) => client.getCurrentSessionId() === sessionId,
+		);
+		if (!active) throw new Error(`No active session "${sessionId}"`);
+		const cwd = this.sessionDirectories.get(sessionId);
+		if (!cwd) throw new Error(`No working directory for session "${sessionId}"`);
+		return cwd;
+	}
+
+	/**
 	 * Route a permission response to whichever initialized client holds the
 	 * pending request. Permission requests are resolved by requestId inside the
 	 * client's PermissionManager, so responding on the right client is enough;
@@ -144,5 +200,7 @@ export class SessionHost {
 			[...this.clients.values()].map((c) => c.disconnect().catch(() => {})),
 		);
 		this.clients.clear();
+		this.sessionDirectories.clear();
+		this.redactionSecrets.clear();
 	}
 }

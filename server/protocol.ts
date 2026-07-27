@@ -20,6 +20,12 @@ import type {
 } from "../src/types/session";
 import type { PromptContent, ChatMessage } from "../src/types/chat";
 import type { ConfigAgent } from "./config-store";
+import type {
+	NotebookDocumentResponse,
+	NotebookIndexResponse,
+	NotebookMutationResponse,
+	NotebookSessionState,
+} from "../src/types/notebook";
 
 // ---- REST -----------------------------------------------------------------
 
@@ -69,6 +75,12 @@ export interface PromptRequest {
 /** POST /api/session/cancel */
 export interface CancelRequest {
 	sessionId: string;
+}
+
+/** POST /api/session/shell — direct server shell in the active session cwd. */
+export interface ShellRequest {
+	sessionId: string;
+	command: string;
 }
 
 /** POST /api/session/{load,resume,fork} */
@@ -121,6 +133,48 @@ export interface SaveMessagesRequest {
 	agentId: string;
 	messages: ChatMessage[];
 }
+
+/** Notebook repository APIs. The token never appears in a request/response. */
+export interface NotebookSourceRequest {
+	repository: string;
+	ref: string;
+}
+export interface NotebookLoadRequest extends NotebookSourceRequest {
+	name: string;
+	path: string;
+	readmeSha: string;
+}
+export interface NotebookSaveRequest extends NotebookSourceRequest {
+	path: string;
+	sha: string;
+	prompts: string[];
+}
+export interface NotebookAddRequest extends NotebookSourceRequest {
+	readmeSha: string;
+	name: string;
+	path: string;
+	comment?: string;
+	prompts?: string[];
+}
+export interface NotebookRemoveRequest extends NotebookSourceRequest {
+	readmeSha: string;
+	path: string;
+}
+export interface NotebookSessionRequest {
+	sessionId: string;
+}
+export interface SaveNotebookSessionRequest extends NotebookSessionRequest {
+	state: NotebookSessionState;
+}
+export interface NotebookSessionResponse {
+	state: NotebookSessionState | null;
+}
+
+export type {
+	NotebookDocumentResponse,
+	NotebookIndexResponse,
+	NotebookMutationResponse,
+};
 
 export interface ErrorResponse {
 	error: string;

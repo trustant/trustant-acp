@@ -3,13 +3,17 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { describe, expect, it } from "vitest";
 import { resolveManagedPiRuntime } from "../server/managed-runtime";
-import { buildPiSessionRequestMeta } from "../src/acp/acp-client";
+import {
+	buildPiSessionRequestMeta,
+	buildSessionMcpServers,
+} from "../src/acp/acp-client";
 
 async function managedFixture(root: string) {
 	const workbench = join(root, "workbench", "example");
 	const extensionPath = join(root, "runtime", "trustable-runtime.ts");
 	const manifestPath = join(root, "runtime", "pi-runtime.json");
 	const watcherLog = join(root, "runtime", "ops-ide-devel.log");
+	const mcpConfig = join(root, "runtime", "mcp.json");
 	await mkdir(workbench, { recursive: true });
 	await mkdir(join(root, "runtime"), { recursive: true });
 	await writeFile(extensionPath, "export default function () {}\n");
@@ -24,6 +28,26 @@ async function managedFixture(root: string) {
 		}),
 	);
 	await writeFile(
+		mcpConfig,
+		JSON.stringify({
+			mcpServers: {
+				browser: {
+					type: "stdio",
+					command: "browser",
+					args: [],
+					env: {},
+				},
+				openserverless: {
+					type: "stdio",
+					command: "openserverless",
+					args: ["--token", "mcp-sentinel-token"],
+					env: { SERVICE_PASSWORD: "mcp-sentinel-password" },
+				},
+			},
+		}),
+		{ mode: 0o600 },
+	);
+	await writeFile(
 		manifestPath,
 		JSON.stringify({
 			version: 2,
@@ -34,12 +58,13 @@ async function managedFixture(root: string) {
 					developmentUrl: "http://localhost:5173",
 					browserUrl: "http://vite.example.test:8910",
 					requiredMcpServers: ["openserverless", "browser"],
+					mcpConfig,
 					watcherLog,
 				},
 			],
 		}),
 	);
-	return { workbench, extensionPath, manifestPath, watcherLog };
+	return { workbench, extensionPath, manifestPath, watcherLog, mcpConfig };
 }
 
 describe("Trustable managed Pi runtime", () => {
@@ -68,9 +93,20 @@ describe("Trustable managed Pi runtime", () => {
 			developmentUrl: "http://localhost:5173",
 			browserUrl: "http://vite.example.test:8910",
 			requiredMcpServers: ["browser", "openserverless"],
+			mcpConfig: fixture.mcpConfig,
 			watcherLog: fixture.watcherLog,
 		});
 		expect(result?.extensionPath).toBe(fixture.extensionPath);
+		expect(result?.mcpServers.map((server) => server.name)).toEqual([
+			"browser",
+			"openserverless",
+		]);
+		expect(result?.redactionSecrets).toEqual(
+			expect.arrayContaining([
+				"mcp-sentinel-token",
+				"mcp-sentinel-password",
+			]),
+		);
 	});
 
 	it("fails closed for a cwd outside the selected workbench", async () => {
@@ -140,5 +176,36 @@ describe("Trustable managed Pi runtime", () => {
 		expect(() =>
 			buildPiSessionRequestMeta(config, "/workbench/other"),
 		).toThrow("outside the selected workbench");
+	});
+
+	it("passes managed MCP servers to Codex and Claude but keeps Pi on its proxy", () => {
+		const servers = [
+			{
+				name: "browser",
+				command: "trustable-browser-mcp",
+				args: [],
+				env: [],
+			},
+		];
+		expect(
+			buildSessionMcpServers({
+				id: "codex",
+				displayName: "Codex",
+				command: "codex-acp",
+				args: [],
+				workingDirectory: "/workbench/example",
+				mcpServers: servers,
+			}),
+		).toEqual(servers);
+		expect(
+			buildSessionMcpServers({
+				id: "pi",
+				displayName: "Pi",
+				command: "pi-acp",
+				args: [],
+				workingDirectory: "/workbench/example",
+				mcpServers: servers,
+			}),
+		).toEqual([]);
 	});
 });

@@ -36,6 +36,13 @@ The codebase is cleanly layered. ACP protocol handling is confined to `src/acp/`
 
 **Portable core (framework-agnostic):** `acp/type-converter.ts`, `acp/acp-handler.ts`, `acp/permission-handler.ts`; all of `types/`; pure `services/` (`message-state`, `message-sender`, `session-state`, `session-helpers`, `settings-normalizer`, `view-registry`); most `hooks/`; pure React (`PermissionBanner`, `TerminalBlock`, `SuggestionPopup`); `utils/logger`, `utils/text`.
 
+In Trustable-managed mode the Node host also owns MCP selection. It validates a
+credential-free workbench `.mcp.json` against the private mode-`0600`
+`mcpConfig` named by the runtime manifest. Codex and Claude receive those
+servers through ACP session parameters; Pi receives an empty ACP list and uses
+its managed proxy plus credential-free launcher descriptors. Generic
+`config.json` and browser requests cannot add commands.
+
 ## 3. Target architecture
 
 Two processes, one repo (monorepo or two build targets):
@@ -151,6 +158,9 @@ Single JSON file, loaded at server start, hot-reloadable via the settings API. S
   consistently expose the optional generated helper. TruACP clears its metadata
   only after the owning agent confirms deletion.
 - `POST /session/:id/prompt`, `/session/:id/cancel`, `/session/:id/config-option`, `/session/:id/mode`
+- `POST /api/session/shell` `{ sessionId, command }` executes an explicit
+  user `!` command directly in the active session cwd. The server derives cwd
+  from live session state; the browser cannot supply or override it.
 - `GET /api/directory` (current default cwd), `POST /api/directory` (change default cwd) — see §10e.
 - `POST /permission/:id` (approve/reject)
 - `GET/PUT /config`
@@ -288,6 +298,35 @@ Process handling (all three constraints are load-bearing — see the comments in
   recursively (a single `pkill -P` misses the lower generations), and as a backstop
   cleanup reaps whatever still holds `$ACP_PORT` (looked up via `ss`, which reports
   PIDs for processes we own).
+
+### Managed MCP lifecycle and redaction
+
+`TRUSTABLE_RUNTIME_CONFIG` version 2 identifies a private `mcpConfig` outside
+the workbench. Its names must exactly match the credential-free `.mcp.json`.
+For Codex and Claude, `session/new`, `session/load`, `session/resume`, and
+`session/fork` carry the converted stdio/HTTP entries. Pi continues to use
+`pi-mcp-adapter`; secret-bearing stdio descriptors call the fixed
+`trustable-mcp-launch` host launcher.
+
+Only one agent process remains initialized. Selecting another agent disconnects
+the previous process tree first, which also closes its persistent Browser MCP.
+The Browser server serializes requests, preserves one page/context, rejects
+empty or stale captures, and performs deterministic signal cleanup.
+
+TruACP removes host config paths and service credential variables from the
+general Codex/Claude process environment. MCP values are injected only into the
+selected MCP child. Known values, sensitive fields, and credential-bearing URIs
+are recursively redacted from session updates and direct-shell REST results
+before browser display or persistence. The Pi policy extension additionally
+blocks direct reads or shell inspection of the private MCP config.
+
+Service isolation remains inside the selected MCP process rather than in agent
+prompts. The private Redis descriptor launches `trustable-redis-mcp`, which
+qualifies reviewed key, scan, channel, and index arguments with the
+application's private prefix and rejects global or unknown operations. The
+private S3 descriptor names its environment-derived primary connection
+`default`. Pi, Codex, and Claude therefore receive the same isolation and
+connection semantics through their different ACP/proxy delivery paths.
 
 The main loop polls the two watcher PIDs rather than using `wait -n`: under `set -e`
 a bare `wait -n` bypasses the trap when a child exits non-zero, while `wait -n || true`
@@ -510,6 +549,9 @@ The chat UI connects to a default agent and lets the user switch:
   loads the selected one through ACP `session/load`. The managed header does not
   render the launch-time cwd: an app is already scoped to its workbench and the
   absolute server path provides no useful user action.
+- Pi's startup prelude follows the same boundary: `AGENTS.md` remains active
+  project context, but its absolute path and a redundant **Context** section are
+  not rendered into the browser conversation.
 - Each non-active session row has a separate `×` action. It asks for explicit
   confirmation, calls standard ACP `session/delete`, keeps failures visible in
   the modal, and removes the row only after Pi and TruACP metadata deletion both
@@ -519,6 +561,18 @@ The chat UI connects to a default agent and lets the user switch:
   session with `ArrowUp`/`ArrowDown`. It preserves the unfinished draft and
   does not intercept selection, IME/modifier input, or ordinary multiline
   cursor movement.
+- In a ready session the composer placeholder is exactly **"Message the agent
+  or use the '!' to execute shell commands."** A trimmed submission whose first
+  character is `!` bypasses ACP and every agent, while embedded `!` characters
+  remain ordinary prompt text. The browser sends only the active `sessionId`
+  and command to `POST /api/session/shell`; Node runs it in the cwd recorded
+  when that session was created/loaded/resumed/forked. The user command and a
+  separate shell result turn are both visible in the conversation.
+- Shell execution uses the platform shell with stdin closed, a 30-second
+  timeout, a 256 KiB combined stdout/stderr capture limit, process-tree
+  termination, explicit timeout/truncation/nonzero-exit rendering, and a
+  credential-filtered child environment. Transport and server logs never
+  serialize the host environment. The browser imports no Node process API.
 - Transcript text remains selectable. User and assistant turns expose a copy
   action, and rendered code blocks expose their own copy action. Message copy
   uses the original Markdown; the browser uses `navigator.clipboard` when
@@ -539,8 +593,8 @@ server-side configuration. Browser requests cannot inject extension paths.
 
 In a Trustable-managed runtime, issue #57 adds a versioned host contract.
 TruACP reads `TRUSTABLE_RUNTIME_CONFIG`, validates its canonical workbench,
-exact generated `.mcp.json`, local development URL, browser-visible application
-URL, private watcher log, and the extension selected by
+exact credential-free `.mcp.json`, private `mcpConfig`, local development URL,
+browser-visible application URL, private watcher log, and the extension selected by
 `TRUSTABLE_PI_EXTENSION_PATH`, then includes
 only that validated path in `piLaunch.extensions.paths`. The manifest uses the
 version-2 `workbenches` envelope shared with Browser MCP. Managed mode fails
@@ -775,6 +829,11 @@ Trustable's managed browser UI intentionally uses the single launch-time
 that today only reads config): `setProjectDir(dir)` updates the field consulted by
 `initialize`/`newSession` fallbacks.
 
+`SessionHost` also records the resolved cwd for every successful new/load/resume/
+fork operation. Direct shell mode accepts only the currently active session id
+and resolves its cwd from this host-owned mapping; a stale or unknown session is
+rejected instead of falling back to the default directory.
+
 ### New session in a chosen directory
 
 - **`POST /api/session/new`** already accepts `{ agentId, cwd? }` and creates the
@@ -815,10 +874,102 @@ that today only reads config): `setProjectDir(dir)` updates the field consulted 
 - For Codex, verify session readiness applies `agent-full-access`; for Claude,
   verify it applies `bypassPermissions`. Reading files, running ordinary shell
   commands, and modifying the workbench must not create permission prompts.
+- In each supported agent session submit `!pwd`, stdout/stderr, and a nonzero
+  command. Confirm no agent prompt is emitted, the resolved cwd is the active
+  project, command/result remain visible in the conversation, and timeout,
+  truncation, stderr, and exit status are explicit.
 
 New REST endpoints: `GET /api/directory`, `POST /api/directory`.
+
+## 10f. GitHub-backed notebook workflows
+
+The browser can load an ordered prompt notebook into an existing ACP session.
+The model/parser/reducer live in `src/types/notebook.ts` and
+`src/services/notebook.ts`; the GitHub Contents API client lives exclusively on
+the Node server in `server/notebook-github.ts`.
+
+The default source is `trustable-ai/notebooks` on `main`. Public reads need no
+credential. Writes use `process.env.NOTEBOOK_GITHUB_TOKEN`; the browser receives
+only `hasToken` and never displays a token field. The source branch is explicit,
+paths are validated repository-relative Markdown paths, and every mutation
+checks the loaded SHA before sending it to GitHub. File/index operations are
+separate commits and report partial completion explicitly.
+
+REST endpoints are `POST /api/notebooks/{index,load,add,remove}` and
+`PUT /api/notebooks/save`. Session notebook state is persisted through
+`POST /api/sessions/notebook/get` and `PUT /api/sessions/notebook` as a
+whitelisted sidecar under `.acp-data`; it contains notebook/ad-hoc nodes,
+execution outputs, selection, dirty state, and source SHAs, but no credentials.
+A fork copies this sidecar. New sessions start without one.
+
+Notebook nodes use the existing `/api/session/prompt` path. Node execution
+advances to the next persisted node exactly once; ad-hoc input is inserted
+before selection without advancing; pin promotes it into the persisted save
+set. The final node clears selection. Ordinary chats follow the pre-existing
+path whenever no notebook is loaded.
+
+Notebook cards show a bounded task title derived from the first Markdown
+heading or meaningful line. Full prompt text is collapsed under **Task
+details**. Assistant output is visually primary, while tool calls share a
+scrollable activity window with three visible rows that follows the latest
+operation without dropping history. These are presentation-only projections
+of the existing node and output state.
+
+Tool titles and statuses are display-only ACP adapter metadata. ChatApp and the
+server sidecar boundary normalize missing, non-string, empty, or oversized
+values to bounded fallback strings, so one malformed tool event cannot reject
+the complete notebook state. Structural node and tool-call IDs remain strict.
+
+The complete product contract is [spec/notebook.md](../spec/notebook.md).
 
 ## 11. Verification
 
 - **Phase 1**: from a terminal, server spawns `claude` in a chosen cwd, completes `initialize`→`newSession`→`sendPrompt`, and streams `agent_message_chunk`s to stdout. Repeat for `codex` and `pi`.
 - **End-to-end**: open `localhost:PORT`, start a chat, send a prompt, see streamed response + a tool call with diff, approve a permission, fork/resume a session, export to markdown. `config.json` alone (plus `.env`) fully configures agents, cwd, and display.
+
+## Upstream Pi runtime ownership (issue #71)
+
+This section supersedes earlier fork-specific Pi packaging language. Trustable
+uses the exact upstream `@earendil-works/pi-*` `0.82.0` package set recorded in
+`pi.version`; `setup.sh` must verify each reviewed SHA-512 value from
+`pi.integrity` before installation. The ACP repository must not contain a `pi`
+gitlink, build the Pi source tree, accept prebuilt `pi-packages`, or fall back to
+an unpinned registry release. The separately owned `pi-acp` fork remains pinned
+because it supplies Trustable's ACP launch and lifecycle behavior.
+
+Trustable-specific repeated-stream protection belongs to
+`extensions/trustable-runtime.ts`, using upstream Pi's `message_update`,
+`message_end`, and `ctx.abort()` extension contracts. Four occurrences of one
+normalized 32-word window within a single assistant text response abort the
+active provider run and finalize that assistant message with an explicit error.
+The detector resets for each assistant response. It must not impose a global
+turn, tool-call, or provider-step budget; healthy runs beyond 300 turns remain
+valid.
+
+Both clean `trudev` setup and production image setup consume the same
+`pi.version`, `pi.integrity`, managed extension, and pinned `pi-acp` artifact.
+No build may depend on a local Pi checkout, unpublished object, cached tarball,
+or developer-machine path.
+## Header connection state
+
+- `Connecting...` describes only the interval before ACP exposes a usable
+  session.
+- Once the session is ready, the header remains connected while prompts,
+  notebook nodes, tools, or other general UI work are busy.
+
+## Streaming chat scroll
+
+- New streamed output follows the bottom only while the reader is already
+  within 80 pixels of it.
+- Scrolling upward preserves the reader's position across subsequent text,
+  reasoning, tool, permission, and notebook updates.
+- Returning near the bottom re-enables output following automatically.
+
+## Header actions
+
+- TruACP renders configuration, new-session, session-history, notebook, and
+  run-next actions as compact icon buttons.
+- Every icon action exposes the same descriptive accessible label through
+  `aria-label` and one native `title` tooltip. No second CSS tooltip is rendered.
+- Icon-only presentation does not change action availability, disabled state,
+  or click behavior.
