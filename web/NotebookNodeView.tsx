@@ -1,7 +1,12 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { NotebookNode } from "../src/types/notebook";
+import { notebookPromptSummary } from "../src/services/notebook";
+import type {
+	NotebookAssistantOutput,
+	NotebookNode,
+	NotebookToolOutput,
+} from "../src/types/notebook";
 
 interface NotebookNodeViewProps {
 	node: NotebookNode;
@@ -26,6 +31,21 @@ export function NotebookNodeView({
 	onRemove,
 	onPin,
 }: NotebookNodeViewProps): React.ReactElement {
+	const assistantOutputs = node.outputs.filter(
+		(output): output is NotebookAssistantOutput =>
+			output.kind === "assistant",
+	);
+	const toolOutputs = node.outputs.filter(
+		(output): output is NotebookToolOutput => output.kind === "tool",
+	);
+	const latestTool = toolOutputs[toolOutputs.length - 1];
+	const activityRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		const activity = activityRef.current;
+		if (activity) activity.scrollTop = activity.scrollHeight;
+	}, [toolOutputs.length, latestTool?.id, latestTool?.status]);
+
 	return (
 		<section
 			className={`notebook-node ${node.kind} ${
@@ -66,10 +86,22 @@ export function NotebookNodeView({
 					</button>
 				</div>
 			</div>
-			<div className="notebook-node-prompt">{node.prompt}</div>
-			{node.outputs.map((output) =>
-				output.kind === "assistant" ? (
-					<div className="notebook-node-output" key={output.id}>
+			<div className="notebook-node-task">
+				<h3 className="notebook-node-title">
+					{notebookPromptSummary(node.prompt)}
+				</h3>
+				<details className="notebook-node-details">
+					<summary>Task details</summary>
+					<div className="notebook-node-prompt">{node.prompt}</div>
+				</details>
+			</div>
+			{assistantOutputs.map((output) => (
+				<div
+					className="notebook-agent-response"
+					key={output.id}
+					aria-live="polite"
+				>
+					<div className="notebook-agent-label">Agent response</div>
 						{output.thoughts && (
 							<details className="thoughts">
 								<summary>Reasoning</summary>
@@ -83,17 +115,31 @@ export function NotebookNodeView({
 								</ReactMarkdown>
 							</div>
 						)}
+					{!output.text && !output.thoughts && (
+						<div className="notebook-agent-working">Agent is working...</div>
+					)}
+				</div>
+			))}
+			{toolOutputs.length > 0 && (
+				<div className="notebook-tool-activity">
+					<div className="notebook-tool-activity-header">
+						<span>Activity</span>
+						<span>{toolOutputs.length} operations</span>
 					</div>
-				) : (
-					<div
-						className={`turn tool status-${output.status}`}
-						key={output.id}
-					>
-						<span className="tool-icon">Tool</span>
-						<span className="tool-title">{output.title}</span>
-						<span className="tool-status">{output.status}</span>
+					<div className="notebook-tool-window" ref={activityRef}>
+						{toolOutputs.map((output) => (
+							<div
+								className={`turn tool status-${output.status}`}
+								key={output.id}
+								title={`${output.title} - ${output.status}`}
+							>
+								<span className="tool-icon">Tool</span>
+								<span className="tool-title">{output.title}</span>
+								<span className="tool-status">{output.status}</span>
+							</div>
+						))}
 					</div>
-				),
+				</div>
 			)}
 		</section>
 	);

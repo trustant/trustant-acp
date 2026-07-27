@@ -44,6 +44,26 @@ export function serializeNotebookMarkdown(prompts: string[]): string {
 	return normalized.length ? `${normalized.join("\n\n---\n\n")}\n` : "";
 }
 
+/**
+ * Derive the compact task label shown by the notebook conversation UI.
+ * Detailed prompt text remains unchanged and is available through disclosure.
+ */
+export function notebookPromptSummary(prompt: string, max = 96): string {
+	const lines = prompt.replace(/\r\n?/g, "\n").split("\n");
+	const meaningful = lines.filter((line) => line.trim() !== "");
+	const heading = meaningful.find((line) => /^\s*#{1,6}\s+\S/.test(line));
+	const source = heading ?? meaningful[0] ?? "";
+	const compact = source
+		.replace(/^\s*#{1,6}\s+/, "")
+		.replace(/[*_`]/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
+	if (!compact) return "Untitled task";
+	const limit = Math.max(8, max);
+	if (compact.length <= limit) return compact;
+	return `${compact.slice(0, limit - 3).trimEnd()}...`;
+}
+
 /** Parse only README lines matching the notebook index grammar. */
 export function parseNotebookIndex(markdown: string): NotebookIndexEntry[] {
 	const entries: NotebookIndexEntry[] = [];
@@ -176,6 +196,20 @@ function text(value: unknown, field: string, max = 200_000): string {
 	return value;
 }
 
+/**
+ * Tool title/status are adapter-owned display metadata, not structural state.
+ * Normalize them instead of rejecting the complete notebook when an ACP
+ * adapter emits a missing, structured, or unexpectedly large value.
+ */
+function toolDisplayText(
+	value: unknown,
+	fallback: string,
+	max: number,
+): string {
+	if (typeof value !== "string" || value.trim() === "") return fallback;
+	return value.slice(0, max);
+}
+
 function normalizeOutput(value: unknown): NotebookOutput {
 	const output = record(value);
 	const kind = output.kind;
@@ -191,8 +225,8 @@ function normalizeOutput(value: unknown): NotebookOutput {
 		return {
 			kind,
 			id: text(output.id, "tool id", 200),
-			title: text(output.title, "tool title", 2_000),
-			status: text(output.status, "tool status", 200),
+			title: toolDisplayText(output.title, "(tool)", 2_000),
+			status: toolDisplayText(output.status, "unknown", 200),
 		};
 	}
 	throw new Error("Bad request: invalid notebook output kind");

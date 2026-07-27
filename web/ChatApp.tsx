@@ -153,6 +153,20 @@ function nextId(prefix: string): string {
 	return `${prefix}-${Date.now()}-${localId}`;
 }
 
+/**
+ * ACP adapters do not all emit the same runtime shape for optional tool
+ * display metadata. Keep malformed metadata out of React and the notebook
+ * sidecar without discarding the structural tool-call event.
+ */
+function toolDisplayText(
+	value: unknown,
+	fallback: string,
+	max: number,
+): string {
+	if (typeof value !== "string" || value.trim() === "") return fallback;
+	return value.slice(0, max);
+}
+
 function nodesFromPrompts(prompts: string[]): NotebookNode[] {
 	return prompts.map((prompt) => ({
 		id: nextId("notebook"),
@@ -344,8 +358,16 @@ export function ChatApp(): React.ReactElement {
 														{
 															kind: "tool",
 															id: u.toolCallId,
-															title: u.title ?? "(tool)",
-															status: u.status,
+															title: toolDisplayText(
+																u.title,
+																"(tool)",
+																2_000,
+															),
+															status: toolDisplayText(
+																u.status,
+																"unknown",
+																200,
+															),
 														},
 													],
 												}
@@ -360,15 +382,19 @@ export function ChatApp(): React.ReactElement {
 						{
 							kind: "tool",
 							id: u.toolCallId,
-							title: u.title ?? "(tool)",
-							status: u.status,
+							title: toolDisplayText(u.title, "(tool)", 2_000),
+							status: toolDisplayText(u.status, "unknown", 200),
 						},
 					]);
 				}
 				if (u.permissionRequest && !u.permissionRequest.isCancelled) {
 					setPermission({
 						requestId: u.permissionRequest.requestId,
-						title: u.title ?? "Permission required",
+						title: toolDisplayText(
+							u.title,
+							"Permission required",
+							2_000,
+						),
 						options: u.permissionRequest.options.map((o) => ({
 							optionId: o.optionId,
 							name: o.name,
@@ -388,8 +414,22 @@ export function ChatApp(): React.ReactElement {
 										output.id === u.toolCallId
 											? {
 													...output,
-													status: u.status ?? output.status,
-													title: u.title ?? output.title,
+													status:
+														u.status == null
+															? output.status
+															: toolDisplayText(
+																	u.status,
+																	"unknown",
+																	200,
+																),
+													title:
+														u.title == null
+															? output.title
+															: toolDisplayText(
+																	u.title,
+																	"(tool)",
+																	2_000,
+																),
 												}
 											: output,
 									),
@@ -402,8 +442,22 @@ export function ChatApp(): React.ReactElement {
 						t.kind === "tool" && t.id === u.toolCallId
 							? {
 									...t,
-									status: u.status ?? t.status,
-									title: u.title ?? t.title,
+									status:
+										u.status == null
+											? t.status
+											: toolDisplayText(
+													u.status,
+													"unknown",
+													200,
+												),
+									title:
+										u.title == null
+											? t.title
+											: toolDisplayText(
+													u.title,
+													"(tool)",
+													2_000,
+												),
 								}
 							: t,
 					),

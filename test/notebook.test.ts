@@ -4,6 +4,7 @@ import {
 	advanceNotebookSelection,
 	insertAdHocNode,
 	normalizeNotebookSessionState,
+	notebookPromptSummary,
 	notebookPromptsForSave,
 	parseNotebookIndex,
 	parseNotebookMarkdown,
@@ -32,6 +33,18 @@ describe("notebook Markdown", () => {
 		expect(serializeNotebookMarkdown([" first\n", "\nsecond "])).toBe(
 			" first\n\n---\n\nsecond \n",
 		);
+	});
+
+	it("derives a bounded task summary without changing the prompt", () => {
+		expect(
+			notebookPromptSummary(
+				"Context before title\n\n# Phase 2 - Employee management\n\nDetails",
+			),
+		).toBe("Phase 2 - Employee management");
+		const summary = notebookPromptSummary("A".repeat(200), 24);
+		expect(summary).toHaveLength(24);
+		expect(summary.endsWith("...")).toBe(true);
+		expect(notebookPromptSummary(" \n ")).toBe("Untitled task");
 	});
 });
 
@@ -108,5 +121,50 @@ describe("notebook workflow", () => {
 			NOTEBOOK_GITHUB_TOKEN: "must-not-persist",
 		});
 		expect(normalized).not.toHaveProperty("NOTEBOOK_GITHUB_TOKEN");
+	});
+
+	it("normalizes adapter-owned tool metadata without losing notebook state", () => {
+		const normalized = normalizeNotebookSessionState({
+			version: 1,
+			source: { repository: "owner/repo", ref: "main" },
+			notebookName: "Example",
+			path: "example.md",
+			fileSha: "file",
+			readmeSha: "readme",
+			nodes: [
+				{
+					...node("a"),
+					outputs: [
+						{
+							kind: "tool",
+							id: "tool-1",
+							title: { text: "structured adapter title" },
+							status: null,
+						},
+						{
+							kind: "tool",
+							id: "tool-2",
+							title: "t".repeat(2_100),
+							status: "s".repeat(300),
+						},
+					],
+				},
+			],
+			selectedNodeId: "a",
+			dirty: false,
+		});
+
+		expect(normalized.nodes[0].outputs[0]).toEqual({
+			kind: "tool",
+			id: "tool-1",
+			title: "(tool)",
+			status: "unknown",
+		});
+		expect(normalized.nodes[0].outputs[1]).toEqual({
+			kind: "tool",
+			id: "tool-2",
+			title: "t".repeat(2_000),
+			status: "s".repeat(200),
+		});
 	});
 });

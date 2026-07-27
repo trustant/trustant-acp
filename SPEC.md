@@ -320,6 +320,14 @@ are recursively redacted from session updates and direct-shell REST results
 before browser display or persistence. The Pi policy extension additionally
 blocks direct reads or shell inspection of the private MCP config.
 
+Service isolation remains inside the selected MCP process rather than in agent
+prompts. The private Redis descriptor launches `trustable-redis-mcp`, which
+qualifies reviewed key, scan, channel, and index arguments with the
+application's private prefix and rejects global or unknown operations. The
+private S3 descriptor names its environment-derived primary connection
+`default`. Pi, Codex, and Claude therefore receive the same isolation and
+connection semantics through their different ACP/proxy delivery paths.
+
 The main loop polls the two watcher PIDs rather than using `wait -n`: under `set -e`
 a bare `wait -n` bypasses the trap when a child exits non-zero, while `wait -n || true`
 swallows the exit and then blocks on the *remaining* child — both leave half a stack
@@ -541,6 +549,9 @@ The chat UI connects to a default agent and lets the user switch:
   loads the selected one through ACP `session/load`. The managed header does not
   render the launch-time cwd: an app is already scoped to its workbench and the
   absolute server path provides no useful user action.
+- Pi's startup prelude follows the same boundary: `AGENTS.md` remains active
+  project context, but its absolute path and a redundant **Context** section are
+  not rendered into the browser conversation.
 - Each non-active session row has a separate `×` action. It asks for explicit
   confirmation, calls standard ACP `session/delete`, keeps failures visible in
   the modal, and removes the row only after Pi and TruACP metadata deletion both
@@ -896,6 +907,18 @@ advances to the next persisted node exactly once; ad-hoc input is inserted
 before selection without advancing; pin promotes it into the persisted save
 set. The final node clears selection. Ordinary chats follow the pre-existing
 path whenever no notebook is loaded.
+
+Notebook cards show a bounded task title derived from the first Markdown
+heading or meaningful line. Full prompt text is collapsed under **Task
+details**. Assistant output is visually primary, while tool calls share a
+scrollable activity window with three visible rows that follows the latest
+operation without dropping history. These are presentation-only projections
+of the existing node and output state.
+
+Tool titles and statuses are display-only ACP adapter metadata. ChatApp and the
+server sidecar boundary normalize missing, non-string, empty, or oversized
+values to bounded fallback strings, so one malformed tool event cannot reject
+the complete notebook state. Structural node and tool-call IDs remain strict.
 
 The complete product contract is [spec/notebook.md](../spec/notebook.md).
 
