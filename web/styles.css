@@ -12,6 +12,7 @@
 	--accent-text: #ffffff;
 	--error-bg: #fee2e2;
 	--error-text: #991b1b;
+	--warning-text: #a16207;
 	--notebook: #0f766e;
 	--notebook-soft: #ccfbf1;
 	--mono: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -27,6 +28,7 @@
 		--accent: #3b82f6;
 		--error-bg: #451a1a;
 		--error-text: #fca5a5;
+		--warning-text: #facc15;
 		--notebook: #2dd4bf;
 		--notebook-soft: #123b37;
 	}
@@ -262,6 +264,16 @@ body {
 }
 .turn.tool.status-completed .tool-status {
 	color: #16a34a;
+}
+.turn.tool.status-issues-found .tool-status,
+.turn.tool.status-attempt-failed .tool-status {
+	color: var(--warning-text);
+}
+.turn.tool.status-recovered {
+	opacity: 0.72;
+}
+.turn.tool.status-recovered .tool-status {
+	color: var(--muted);
 }
 .turn.tool.status-failed .tool-status {
 	color: var(--error-text);

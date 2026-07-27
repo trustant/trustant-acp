@@ -35,6 +35,48 @@ describe("NotebookGitHubService", () => {
 		).toBeUndefined();
 	});
 
+	it("uses the Trustable-managed source instead of browser input", async () => {
+		const previousManaged = process.env.TRUSTABLE_MANAGED_RUNTIME;
+		const previousRepository = process.env.NOTEBOOK_GITHUB_REPOSITORY;
+		const previousRef = process.env.NOTEBOOK_GITHUB_REF;
+		process.env.TRUSTABLE_MANAGED_RUNTIME = "1";
+		process.env.NOTEBOOK_GITHUB_REPOSITORY = "managed/notebooks";
+		process.env.NOTEBOOK_GITHUB_REF = "release";
+		let requested = "";
+		try {
+			const service = new NotebookGitHubService(
+				async (url) => {
+					requested = String(url);
+					return content("- [One](one.md)\n", "readme-sha");
+				},
+				() => "",
+			);
+			const index = await service.readIndex("browser/override", "other");
+			expect(index.source).toEqual({
+				repository: "managed/notebooks",
+				ref: "release",
+			});
+			expect(requested).toContain("/repos/managed/notebooks/");
+			expect(requested).toContain("ref=release");
+		} finally {
+			if (previousManaged === undefined) {
+				delete process.env.TRUSTABLE_MANAGED_RUNTIME;
+			} else {
+				process.env.TRUSTABLE_MANAGED_RUNTIME = previousManaged;
+			}
+			if (previousRepository === undefined) {
+				delete process.env.NOTEBOOK_GITHUB_REPOSITORY;
+			} else {
+				process.env.NOTEBOOK_GITHUB_REPOSITORY = previousRepository;
+			}
+			if (previousRef === undefined) {
+				delete process.env.NOTEBOOK_GITHUB_REF;
+			} else {
+				process.env.NOTEBOOK_GITHUB_REF = previousRef;
+			}
+		}
+	});
+
 	it("uses the server token for writes but never returns it", async () => {
 		const token = "github-secret";
 		const calls: RequestInit[] = [];

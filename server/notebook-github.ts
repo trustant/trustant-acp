@@ -138,10 +138,17 @@ export class NotebookGitHubService {
 		return Boolean(this.tokenProvider());
 	}
 
-	private source(repository: string, ref: string): NotebookSource {
+	private source(repository?: string, ref?: string): NotebookSource {
+		const managed = process.env.TRUSTABLE_MANAGED_RUNTIME === "1";
+		const selectedRepository = managed
+			? process.env.NOTEBOOK_GITHUB_REPOSITORY
+			: repository;
+		const selectedRef = managed ? process.env.NOTEBOOK_GITHUB_REF : ref;
 		return {
-			repository: normalizeNotebookRepository(repository),
-			ref: validateRef(ref),
+			repository: normalizeNotebookRepository(
+				selectedRepository || DEFAULT_NOTEBOOK_SOURCE,
+			),
+			ref: validateRef(selectedRef || DEFAULT_NOTEBOOK_REF),
 		};
 	}
 
@@ -149,7 +156,9 @@ export class NotebookGitHubService {
 		const token = this.tokenProvider();
 		if (!token) {
 			throw new Error(
-				"Forbidden: set NOTEBOOK_GITHUB_TOKEN in the server .env to modify notebooks",
+				process.env.TRUSTABLE_MANAGED_RUNTIME === "1"
+					? "Forbidden: configure notebook GitHub write access in Trustable Configure"
+					: "Forbidden: set NOTEBOOK_GITHUB_TOKEN in the server .env to modify notebooks",
 			);
 		}
 		return token;
@@ -328,7 +337,7 @@ export class NotebookGitHubService {
 		};
 	}
 
-	async readIndex(repository: string, ref: string): Promise<NotebookIndexResponse> {
+	async readIndex(repository?: string, ref?: string): Promise<NotebookIndexResponse> {
 		const source = this.source(repository, ref);
 		try {
 			const readme = await this.readContent(source, "README.md");

@@ -579,6 +579,14 @@ The chat UI connects to a default agent and lets the user switch:
   available and a click-triggered fallback on Trustable's HTTP `*.nip.io`
   development route. Success and failure are visible instead of silently
   swallowing clipboard errors.
+- Tool rows preserve the raw ACP status in their DOM metadata and tooltip while
+  deriving a separate display status from deterministic timeline evidence. A
+  later successful call in the same tool family changes an earlier failure to
+  muted **recovered**; the known React validator reports **issues found** in
+  amber; an active unresolved attempt reports **attempt failed** in amber; only
+  an unresolved failure after the run becomes idle remains red **failed**.
+  Classification never reads free-form assistant prose and does not assume
+  that an arbitrary non-zero shell search means "no results".
 
 ### Trustable Pi ACP extensions
 
@@ -888,12 +896,22 @@ The model/parser/reducer live in `src/types/notebook.ts` and
 `src/services/notebook.ts`; the GitHub Contents API client lives exclusively on
 the Node server in `server/notebook-github.ts`.
 
-The default source is `trustable-ai/notebooks` on `main`. Public reads need no
-credential. Writes use `process.env.NOTEBOOK_GITHUB_TOKEN`; the browser receives
-only `hasToken` and never displays a token field. The source branch is explicit,
-paths are validated repository-relative Markdown paths, and every mutation
-checks the loaded SHA before sending it to GitHub. File/index operations are
-separate commits and report partial completion explicitly.
+The default source is `trustable-ai/notebooks` on `main`. In managed mode,
+Trustable's main Configure screen owns repository/ref and write access, then
+launch injects `NOTEBOOK_GITHUB_REPOSITORY`, `NOTEBOOK_GITHUB_REF`, and
+`NOTEBOOK_GITHUB_TOKEN` only into the TruACP process. Managed APIs ignore
+browser-authored source overrides. The panel displays the active source
+read-only with a Refresh action and directs missing-token users to Trustable
+Configure.
+
+Public reads need no credential. Writes use
+`process.env.NOTEBOOK_GITHUB_TOKEN`; the browser receives only `hasToken` and
+never displays a token field. Save/add/remove are disabled without it. The
+source branch is explicit, paths are validated repository-relative Markdown
+paths, and every mutation checks the loaded SHA before sending it to GitHub.
+File/index operations are separate commits and report partial completion
+explicitly. Standalone TruACP keeps the public defaults when managed source
+variables are absent.
 
 REST endpoints are `POST /api/notebooks/{index,load,add,remove}` and
 `PUT /api/notebooks/save`. Session notebook state is persisted through
@@ -912,8 +930,10 @@ Notebook cards show a bounded task title derived from the first Markdown
 heading or meaningful line. Full prompt text is collapsed under **Task
 details**. Assistant output is visually primary, while tool calls share a
 scrollable activity window with three visible rows that follows the latest
-operation without dropping history. These are presentation-only projections
-of the existing node and output state.
+operation without dropping history. Notebook tool rows use the same
+deterministic recovered/validator/active/terminal display projection as the
+ordinary chat timeline. These are presentation-only projections of the
+existing node and output state; the persisted ACP status is unchanged.
 
 Tool titles and statuses are display-only ACP adapter metadata. ChatApp and the
 server sidecar boundary normalize missing, non-string, empty, or oversized

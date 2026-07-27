@@ -7,6 +7,7 @@ import type {
 	NotebookNode,
 	NotebookToolOutput,
 } from "../src/types/notebook";
+import { toolStatusPresentation } from "./tool-status";
 
 interface NotebookNodeViewProps {
 	node: NotebookNode;
@@ -127,17 +128,27 @@ export function NotebookNodeView({
 						<span>{toolOutputs.length} operations</span>
 					</div>
 					<div className="notebook-tool-window" ref={activityRef}>
-						{toolOutputs.map((output) => (
-							<div
-								className={`turn tool status-${output.status}`}
-								key={output.id}
-								title={`${output.title} - ${output.status}`}
-							>
-								<span className="tool-icon">Tool</span>
-								<span className="tool-title">{output.title}</span>
-								<span className="tool-status">{output.status}</span>
-							</div>
-						))}
+						{toolOutputs.map((output, index) => {
+							const presentation = toolStatusPresentation(
+								output,
+								toolOutputs.slice(index + 1),
+								busy,
+							);
+							return (
+								<div
+									className={`turn tool status-${presentation.status}`}
+									data-acp-status={presentation.rawStatus}
+									key={output.id}
+									title={`${output.title} - ACP status: ${presentation.rawStatus}`}
+								>
+									<span className="tool-icon">Tool</span>
+									<span className="tool-title">{output.title}</span>
+									<span className="tool-status">
+										{presentation.label}
+									</span>
+								</div>
+							);
+						})}
 					</div>
 				</div>
 			)}

@@ -270,11 +270,8 @@ export class AcpTransport {
 
 	// ---- GitHub-backed notebooks ------------------------------------------
 
-	async listNotebooks(
-		repository: string,
-		ref: string,
-	): Promise<NotebookIndexResponse> {
-		return this.call("/api/notebooks/index", { repository, ref });
+	async listNotebooks(): Promise<NotebookIndexResponse> {
+		return this.call("/api/notebooks/index", { repository: "", ref: "" });
 	}
 
 	async loadNotebook(

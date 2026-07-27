@@ -59,6 +59,7 @@ import {
 import { headerConnectionState } from "./connection-status";
 import { isChatNearBottom } from "./chat-scroll";
 import { HeaderActionButton } from "./HeaderActionButton";
+import { toolStatusPresentation } from "./tool-status";
 
 // ---- view model -----------------------------------------------------------
 
@@ -206,10 +207,6 @@ export function ChatApp(): React.ReactElement {
 	);
 	const [historyError, setHistoryError] = useState<string | null>(null);
 	const [notebookPanelOpen, setNotebookPanelOpen] = useState(false);
-	const [notebookSource, setNotebookSource] = useState(
-		"trustable-ai/notebooks",
-	);
-	const [notebookRef, setNotebookRef] = useState("main");
 	const [notebookIndex, setNotebookIndex] =
 		useState<NotebookIndexResponse | null>(null);
 	const [notebook, setNotebook] = useState<NotebookSessionState | null>(null);
@@ -1203,19 +1200,14 @@ export function ChatApp(): React.ReactElement {
 		setNotebookBusy(true);
 		setError(null);
 		try {
-			const index = await transport.listNotebooks(
-				notebookSource,
-				notebookRef,
-			);
+			const index = await transport.listNotebooks();
 			setNotebookIndex(index);
-			setNotebookSource(index.source.repository);
-			setNotebookRef(index.source.ref);
 		} catch (e) {
 			setError(String((e as Error).message ?? e));
 		} finally {
 			setNotebookBusy(false);
 		}
-	}, [notebookSource, notebookRef]);
+	}, []);
 
 	const openNotebookPanel = useCallback(() => {
 		setNotebookPanelOpen(true);
@@ -1746,13 +1738,9 @@ export function ChatApp(): React.ReactElement {
 
 			{notebookPanelOpen && (
 				<NotebookPanel
-					source={notebookSource}
-					sourceRef={notebookRef}
 					index={notebookIndex}
 					activeNotebook={notebook}
 					busy={notebookBusy}
-					onSourceChange={setNotebookSource}
-					onRefChange={setNotebookRef}
 					onRefresh={() => void refreshNotebookIndex()}
 					onLoad={(entry) => void loadNotebook(entry)}
 					onSave={() => void saveNotebook()}
@@ -2066,8 +2054,13 @@ export function ChatApp(): React.ReactElement {
 				ref={scrollRef}
 				onScroll={handleChatScroll}
 			>
-				{turns.map((t) => (
-					<TurnView key={t.id} turn={t} />
+				{turns.map((t, index) => (
+					<TurnView
+						key={t.id}
+						turn={t}
+						laterTurns={turns.slice(index + 1)}
+						active={running}
+					/>
 				))}
 				{notebook?.nodes.map((node) => (
 					<NotebookNodeView
@@ -2258,7 +2251,15 @@ function CopyablePre({
 	);
 }
 
-function TurnView({ turn }: { turn: Turn }): React.ReactElement | null {
+function TurnView({
+	turn,
+	laterTurns,
+	active,
+}: {
+	turn: Turn;
+	laterTurns: Turn[];
+	active: boolean;
+}): React.ReactElement | null {
 	if (turn.kind === "user") {
 		return (
 			<div className="turn user">
@@ -2308,11 +2309,22 @@ function TurnView({ turn }: { turn: Turn }): React.ReactElement | null {
 		);
 	}
 	// tool
+	const presentation = toolStatusPresentation(
+		turn,
+		laterTurns.filter(
+			(candidate): candidate is ToolTurn => candidate.kind === "tool",
+		),
+		active,
+	);
 	return (
-		<div className={`turn tool status-${turn.status}`}>
+		<div
+			className={`turn tool status-${presentation.status}`}
+			data-acp-status={presentation.rawStatus}
+			title={`${turn.title} - ACP status: ${presentation.rawStatus}`}
+		>
 			<span className="tool-icon">🛠</span>
 			<span className="tool-title">{turn.title}</span>
-			<span className="tool-status">{turn.status}</span>
+			<span className="tool-status">{presentation.label}</span>
 		</div>
 	);
 }

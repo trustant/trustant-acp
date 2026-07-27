@@ -6,13 +6,9 @@ import type {
 } from "../src/types/notebook";
 
 interface NotebookPanelProps {
-	source: string;
-	sourceRef: string;
 	index: NotebookIndexResponse | null;
 	activeNotebook: NotebookSessionState | null;
 	busy: boolean;
-	onSourceChange: (source: string) => void;
-	onRefChange: (ref: string) => void;
 	onRefresh: () => void;
 	onLoad: (entry: NotebookIndexEntry) => void;
 	onSave: () => void;
@@ -31,13 +27,9 @@ function defaultPath(name: string): string {
 }
 
 export function NotebookPanel({
-	source,
-	sourceRef,
 	index,
 	activeNotebook,
 	busy,
-	onSourceChange,
-	onRefChange,
 	onRefresh,
 	onLoad,
 	onSave,
@@ -63,36 +55,28 @@ export function NotebookPanel({
 				</button>
 			</div>
 
-			<label className="notebook-field">
-				<span>Source</span>
-				<input
-					aria-label="Notebook source"
-					value={source}
-					onChange={(event) => onSourceChange(event.target.value)}
-					placeholder="trustable-ai/notebooks"
-				/>
-			</label>
-			<label className="notebook-field notebook-ref-field">
-				<span>Branch / ref</span>
-				<input
-					aria-label="Notebook branch"
-					value={sourceRef}
-					onChange={(event) => onRefChange(event.target.value)}
-					placeholder="main"
-				/>
-			</label>
-			<button
-				className="notebook-primary"
-				disabled={busy || !source.trim() || !sourceRef.trim()}
-				onClick={onRefresh}
-			>
-				{busy ? "Loading…" : "Load source"}
-			</button>
+			<div className="notebook-active">
+				<div>
+					<strong>Source</strong>
+					<code>
+						{index
+							? `${index.source.repository} · ${index.source.ref}`
+							: "Configured in Trustable"}
+					</code>
+				</div>
+				<button
+					className="notebook-primary"
+					disabled={busy}
+					onClick={onRefresh}
+				>
+					{busy ? "Loading…" : "Refresh"}
+				</button>
+			</div>
 
 			{index && !hasToken && (
 				<div className="notebook-warning">
-					Read-only. Set <code>NOTEBOOK_GITHUB_TOKEN</code> in the
-					server <code>.env</code> to enable save, add, and remove.
+					Read-only. Configure notebook GitHub write access in Trustable
+					Configure to enable save, add, and remove.
 				</div>
 			)}
 
