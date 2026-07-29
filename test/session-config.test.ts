@@ -133,6 +133,26 @@ describe("managed reasoning configuration", () => {
 			"high",
 		);
 	});
+
+	it("leaves reasoning unset when the active model supports no managed effort", async () => {
+		// A non-reasoning Pi model honestly advertises only "off". Treating that
+		// as an absent control is what keeps the managed default from demanding
+		// an effort the adapter can never apply.
+		const initial = [
+			selectOption("thought_level", "thought_level", "off", ["off"]),
+		];
+		expect(managedReasoningConfig(initial)).toBeNull();
+
+		const setter = setterFor(initial);
+		const result = await applyManagedSessionConfig({
+			agentId: "pi",
+			configOptions: initial,
+			savedReasoningEffort: "high",
+			setConfigOption: setter.setConfigOption,
+		});
+		expect(result.reasoningEffort).toBeNull();
+		expect(setter.setConfigOption).not.toHaveBeenCalled();
+	});
 });
 
 describe("managed write modes", () => {

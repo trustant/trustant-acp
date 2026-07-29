@@ -753,6 +753,14 @@ offers only `off`. A reasoning model supports the standard levels through
 non-null. This keeps the ACP response aligned with Pi's real clamping behavior
 and prevents the managed default from producing a false compatibility error.
 
+Pi's `get_available_thinking_levels` is the primary source for that list; the
+model metadata above is the fallback when a Pi build does not answer it, and
+the historical fixed list is used only when neither source is readable. Levels
+Pi reports outside the adapter's ACP surface are never advertised. The current
+value is always one of the advertised choices, and a `thought_level` change
+reports the level Pi actually applied rather than the level requested, so a
+client that verifies the echo cannot be told a clamped effort was honored.
+
 **Managed deployment ownership.** When Trustable supplies the versioned runtime
 manifest, its Pi extension states that the existing `ops ide devel` watcher is
 the sole owner of live action packaging/deployment. The extension rejects Pi
