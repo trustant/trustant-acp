@@ -55,3 +55,4 @@ plan/
 dist-web/
 dist-bin/
 node_modules/
+server/web-bundle.generated.ts
