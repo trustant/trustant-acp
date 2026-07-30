@@ -1,3 +1,4 @@
 [submodule "pi-acp"]
 	path = pi-acp
 	url = https://github.com/trustable-ai/pi-acp.git
+        branch = main
