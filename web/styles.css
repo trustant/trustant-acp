@@ -686,20 +686,15 @@ body {
 	opacity: 0.45;
 	cursor: default;
 }
-.notebook-warning {
-	margin: 0.8rem 0;
-	padding: 0.6rem;
-	border: 1px solid #f59e0b;
-	border-radius: 8px;
-	background: #fffbeb;
-	color: #92400e;
-	font-size: 0.78rem;
-}
-@media (prefers-color-scheme: dark) {
-	.notebook-warning {
-		background: #422006;
-		color: #fcd34d;
-	}
+/*
+ * Read-only repositories get a quiet closing note instead of the old warning
+ * banner: nothing is wrong, the write controls are simply absent, so the note
+ * carries no border, background, or alert color.
+ */
+.notebook-hint {
+	margin-top: 1rem;
+	color: var(--muted);
+	font-size: 0.75rem;
 }
 .notebook-list {
 	display: flex;
@@ -715,6 +710,10 @@ body {
 .notebook-list-entry.active {
 	border-color: var(--notebook);
 	background: var(--notebook-soft);
+}
+/* The locally saved template heads the list and reads as a distinct source. */
+.notebook-list-entry.saved {
+	border-style: dashed;
 }
 .notebook-list-load {
 	flex: 1;
@@ -798,6 +797,20 @@ body {
 }
 .notebook-node-task {
 	min-width: 0;
+}
+/* In-place prompt editor: matches the read view's monospace prompt rendering so
+ * text does not reflow when an edit starts. */
+.notebook-node-editor {
+	width: 100%;
+	padding: 0.5rem;
+	border: 1px solid var(--notebook);
+	border-radius: 8px;
+	background: var(--bg);
+	color: var(--text);
+	font-family: var(--mono);
+	font-size: 0.86rem;
+	line-height: 1.45;
+	resize: vertical;
 }
 .notebook-node-title {
 	margin: 0;

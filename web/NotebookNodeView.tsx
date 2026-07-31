@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { notebookPromptSummary } from "../src/services/notebook";
@@ -17,6 +17,8 @@ interface NotebookNodeViewProps {
 	onSelect: () => void;
 	onRun: () => void;
 	onEdit: () => void;
+	onSaveEdit: (prompt: string) => void;
+	onCancelEdit: () => void;
 	onRemove: () => void;
 	onPin: () => void;
 }
@@ -29,9 +31,22 @@ export function NotebookNodeView({
 	onSelect,
 	onRun,
 	onEdit,
+	onSaveEdit,
+	onCancelEdit,
 	onRemove,
 	onPin,
 }: NotebookNodeViewProps): React.ReactElement {
+	// WHY: the draft lives in the node being edited rather than in the shared
+	// composer, so editing one step never competes with ad-hoc input and Cancel
+	// can discard the draft without touching persisted state.
+	const [draft, setDraft] = useState(node.prompt);
+
+	// Re-seed whenever an edit starts so a cancelled edit does not leave a stale
+	// draft behind for the next one.
+	useEffect(() => {
+		if (editing) setDraft(node.prompt);
+	}, [editing, node.prompt]);
+
 	const assistantOutputs = node.outputs.filter(
 		(output): output is NotebookAssistantOutput =>
 			output.kind === "assistant",
@@ -69,32 +84,60 @@ export function NotebookNodeView({
 				)}
 				<div className="notebook-node-actions">
 					{node.kind === "input" ? (
-						<button title="Pin as notebook node" disabled={busy} onClick={onPin}>
+						<button title="Pin as template step" disabled={busy} onClick={onPin}>
 							Pin
 						</button>
+					) : editing ? (
+						<>
+							<button
+								title="Save prompt"
+								disabled={busy || !draft.trim()}
+								onClick={() => onSaveEdit(draft.trim())}
+							>
+								Save
+							</button>
+							<button title="Cancel edit" onClick={onCancelEdit}>
+								Cancel
+							</button>
+						</>
 					) : (
 						<>
-							<button title="Run node" disabled={busy} onClick={onRun}>
+							<button title="Run step" disabled={busy} onClick={onRun}>
 								Run
 							</button>
-							<button title="Edit and run" disabled={busy} onClick={onEdit}>
+							<button title="Edit prompt in place" disabled={busy} onClick={onEdit}>
 								Edit
 							</button>
 						</>
 					)}
-					<button title="Remove node" disabled={busy} onClick={onRemove}>
-						Remove
-					</button>
+					{!editing && (
+						<button title="Remove step" disabled={busy} onClick={onRemove}>
+							Remove
+						</button>
+					)}
 				</div>
 			</div>
 			<div className="notebook-node-task">
-				<h3 className="notebook-node-title">
-					{notebookPromptSummary(node.prompt)}
-				</h3>
-				<details className="notebook-node-details">
-					<summary>Task details</summary>
-					<div className="notebook-node-prompt">{node.prompt}</div>
-				</details>
+				{editing ? (
+					<textarea
+						className="notebook-node-editor"
+						aria-label="Edit prompt"
+						value={draft}
+						autoFocus
+						rows={Math.min(20, Math.max(4, draft.split("\n").length + 1))}
+						onChange={(event) => setDraft(event.target.value)}
+					/>
+				) : (
+					<>
+						<h3 className="notebook-node-title">
+							{notebookPromptSummary(node.prompt)}
+						</h3>
+						<details className="notebook-node-details">
+							<summary>Task details</summary>
+							<div className="notebook-node-prompt">{node.prompt}</div>
+						</details>
+					</>
+				)}
 			</div>
 			{assistantOutputs.map((output) => (
 				<div

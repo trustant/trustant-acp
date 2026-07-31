@@ -35,6 +35,20 @@ describe("NotebookGitHubService", () => {
 		).toBeUndefined();
 	});
 
+	it("falls back to the default template repository when none is given", async () => {
+		let requested = "";
+		const service = new NotebookGitHubService(async (url) => {
+			requested = String(url);
+			return content("- [One](one.md)\n", "readme-sha");
+		}, () => "");
+		const index = await service.readIndex("", "");
+		expect(index.source).toEqual({
+			repository: "trustable-ai/templates",
+			ref: "main",
+		});
+		expect(requested).toContain("/repos/trustable-ai/templates/");
+	});
+
 	it("uses the Trustable-managed source instead of browser input", async () => {
 		const previousManaged = process.env.TRUSTABLE_MANAGED_RUNTIME;
 		const previousRepository = process.env.NOTEBOOK_GITHUB_REPOSITORY;

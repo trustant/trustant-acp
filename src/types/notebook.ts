@@ -71,6 +71,12 @@ export interface NotebookSessionState {
 	nodes: NotebookNode[];
 	selectedNodeId: string | null;
 	dirty: boolean;
+	/**
+	 * True when this template was loaded from the application's local
+	 * `template.md` rather than from GitHub. Local templates have no SHAs, so
+	 * saving one always routes back to the local file.
+	 */
+	local?: boolean;
 }
 
 export interface NotebookMutationResponse {

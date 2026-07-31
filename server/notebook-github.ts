@@ -13,7 +13,7 @@ import type {
 	NotebookSource,
 } from "../src/types/notebook";
 
-export const DEFAULT_NOTEBOOK_SOURCE = "trustable-ai/notebooks";
+export const DEFAULT_NOTEBOOK_SOURCE = "trustable-ai/templates";
 export const DEFAULT_NOTEBOOK_REF = "main";
 
 type FetchLike = (

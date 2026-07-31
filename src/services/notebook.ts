@@ -287,5 +287,9 @@ export function normalizeNotebookSessionState(
 		nodes,
 		selectedNodeId,
 		dirty: state.dirty === true,
+		// Whitelisted so a resumed session still knows the template came from the
+		// local file and keeps routing saves there instead of to GitHub. Emitted
+		// only when set, keeping the sidecar unchanged for GitHub templates.
+		...(state.local === true ? { local: true } : {}),
 	};
 }

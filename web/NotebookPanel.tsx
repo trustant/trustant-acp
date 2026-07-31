@@ -8,9 +8,12 @@ import type {
 interface NotebookPanelProps {
 	index: NotebookIndexResponse | null;
 	activeNotebook: NotebookSessionState | null;
+	/** True when a local template.md exists in the launched application. */
+	hasLocalTemplate: boolean;
 	busy: boolean;
 	onRefresh: () => void;
 	onLoad: (entry: NotebookIndexEntry) => void;
+	onLoadLocal: () => void;
 	onSave: () => void;
 	onAdd: (name: string, path: string) => void;
 	onRemove: (entry: NotebookIndexEntry) => void;
@@ -23,15 +26,17 @@ function defaultPath(name: string): string {
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "");
-	return `${slug || "notebook"}.md`;
+	return `${slug || "template"}.md`;
 }
 
 export function NotebookPanel({
 	index,
 	activeNotebook,
+	hasLocalTemplate,
 	busy,
 	onRefresh,
 	onLoad,
+	onLoadLocal,
 	onSave,
 	onAdd,
 	onRemove,
@@ -39,15 +44,18 @@ export function NotebookPanel({
 }: NotebookPanelProps): React.ReactElement {
 	const [newName, setNewName] = useState("");
 	const [newPath, setNewPath] = useState("");
+	// A repository without a write token is read-only. Rather than rendering
+	// disabled write controls plus a warning, the panel hides everything that
+	// cannot work and closes with a single quiet hint.
 	const hasToken = index?.hasToken ?? false;
 
 	return (
-		<aside className="notebook-panel" aria-label="Notebook panel">
+		<aside className="notebook-panel" aria-label="Template panel">
 			<div className="notebook-panel-header">
 				<div>
-					<strong>Notebooks</strong>
+					<strong>Templates</strong>
 					<div className="notebook-panel-subtitle">
-						GitHub-backed prompt workflows
+						GitHub-backed prompt templates
 					</div>
 				</div>
 				<button className="icon-button" title="Close" onClick={onClose}>
@@ -73,18 +81,29 @@ export function NotebookPanel({
 				</button>
 			</div>
 
-			{index && !hasToken && (
-				<div className="notebook-warning">
-					Read-only. Configure notebook GitHub write access in Trustable
-					Configure to enable save, add, and remove.
-				</div>
-			)}
-
-			<div className="notebook-list" aria-label="Available notebooks">
+			<div className="notebook-list" aria-label="Available templates">
+				{hasLocalTemplate && (
+					<div
+						className={`notebook-list-entry saved ${
+							activeNotebook?.local ? "active" : ""
+						}`}
+					>
+						<button
+							className="notebook-list-load"
+							disabled={busy}
+							onClick={onLoadLocal}
+						>
+							<span>Saved Template</span>
+							<small>Saved in this application</small>
+						</button>
+					</div>
+				)}
 				{index?.entries.map((entry) => (
 					<div
 						className={`notebook-list-entry ${
-							activeNotebook?.path === entry.path ? "active" : ""
+							!activeNotebook?.local && activeNotebook?.path === entry.path
+								? "active"
+								: ""
 						}`}
 						key={entry.path}
 					>
@@ -96,22 +115,24 @@ export function NotebookPanel({
 							<span>{entry.name}</span>
 							{entry.comment && <small>{entry.comment}</small>}
 						</button>
-						<button
-							className="icon-button danger"
-							title={`Remove ${entry.name}`}
-							disabled={busy || !hasToken}
-							onClick={() => onRemove(entry)}
-						>
-							×
-						</button>
+						{hasToken && (
+							<button
+								className="icon-button danger"
+								title={`Remove ${entry.name}`}
+								disabled={busy}
+								onClick={() => onRemove(entry)}
+							>
+								×
+							</button>
+						)}
 					</div>
 				))}
-				{index && index.entries.length === 0 && (
-					<div className="notebook-list-empty">No notebooks indexed.</div>
+				{index && index.entries.length === 0 && !hasLocalTemplate && (
+					<div className="notebook-list-empty">No templates indexed.</div>
 				)}
 			</div>
 
-			{activeNotebook && (
+			{hasToken && activeNotebook && (
 				<div className="notebook-active">
 					<div>
 						<strong>{activeNotebook.notebookName}</strong>
@@ -119,7 +140,7 @@ export function NotebookPanel({
 					</div>
 					<button
 						className="notebook-primary"
-						disabled={busy || !hasToken || !activeNotebook.dirty}
+						disabled={busy || !activeNotebook.dirty}
 						onClick={onSave}
 					>
 						Save
@@ -127,41 +148,47 @@ export function NotebookPanel({
 				</div>
 			)}
 
-			<div className="notebook-add">
-				<strong>Add notebook</strong>
-				<input
-					aria-label="New notebook name"
-					value={newName}
-					disabled={!hasToken || busy}
-					placeholder="Notebook name"
-					onChange={(event) => {
-						const value = event.target.value;
-						setNewName(value);
-						if (!newPath || newPath === defaultPath(newName)) {
-							setNewPath(defaultPath(value));
-						}
-					}}
-				/>
-				<input
-					aria-label="New notebook path"
-					value={newPath}
-					disabled={!hasToken || busy}
-					placeholder="notebook-file.md"
-					onChange={(event) => setNewPath(event.target.value)}
-				/>
-				<button
-					disabled={
-						!hasToken || busy || !newName.trim() || !newPath.trim()
-					}
-					onClick={() => {
-						onAdd(newName.trim(), newPath.trim());
-						setNewName("");
-						setNewPath("");
-					}}
-				>
-					Add
-				</button>
-			</div>
+			{hasToken && (
+				<div className="notebook-add">
+					<strong>Add template</strong>
+					<input
+						aria-label="New template name"
+						value={newName}
+						disabled={busy}
+						placeholder="Template name"
+						onChange={(event) => {
+							const value = event.target.value;
+							setNewName(value);
+							if (!newPath || newPath === defaultPath(newName)) {
+								setNewPath(defaultPath(value));
+							}
+						}}
+					/>
+					<input
+						aria-label="New template path"
+						value={newPath}
+						disabled={busy}
+						placeholder="template-file.md"
+						onChange={(event) => setNewPath(event.target.value)}
+					/>
+					<button
+						disabled={busy || !newName.trim() || !newPath.trim()}
+						onClick={() => {
+							onAdd(newName.trim(), newPath.trim());
+							setNewName("");
+							setNewPath("");
+						}}
+					>
+						Add
+					</button>
+				</div>
+			)}
+
+			{index && !hasToken && (
+				<div className="notebook-hint">
+					add in configuration your github token to edit templates
+				</div>
+			)}
 		</aside>
 	);
 }

@@ -214,6 +214,14 @@ export function ChatApp(): React.ReactElement {
 	const [editingNotebookNode, setEditingNotebookNode] = useState<string | null>(
 		null,
 	);
+	// Prompts of the application's saved template.md, or null when none exists.
+	const [localTemplate, setLocalTemplate] = useState<string[] | null>(null);
+	// Set while "Run all" walks the remaining steps; cleared to stop the walk
+	// after the current step when a run fails or the user starts a new session.
+	const runAllRef = useRef(false);
+	// True while a step's prompt is in flight. Guards re-entry within a single
+	// render, which the `busy` state cannot do during a sequential run-all.
+	const notebookRunningRef = useRef(false);
 
 	// Session config options (model/mode/…) exposed by the agent after connect.
 	const [configOptions, setConfigOptions] = useState<SessionConfigOption[]>(
@@ -261,6 +269,10 @@ export function ChatApp(): React.ReactElement {
 	);
 	const activeNotebookNodeRef = useRef<string | null>(null);
 	const activeNotebookOutputRef = useRef<string | null>(null);
+	// Mirrors `notebook` so the run-all loop reads the current prompts between
+	// awaits without re-creating the callback on every state change.
+	const notebookRef = useRef<NotebookSessionState | null>(null);
+	notebookRef.current = notebook;
 
 	// Load agent catalog. The server's defaultAgentId (pi by default) is
 	// preselected and auto-connected below; the pull-down still lets the user
@@ -799,10 +811,23 @@ export function ChatApp(): React.ReactElement {
 		void selectAgent(defaultAgentId);
 	}, [defaultAgentId, agents, selectAgent]);
 
+	/**
+	 * Run one step. Resolves true when the step failed, so a sequential run-all
+	 * can stop instead of firing the remaining prompts into a broken session.
+	 *
+	 * The in-flight guard is a ref rather than the `busy` state because run-all
+	 * calls this repeatedly within one render, where the captured state value
+	 * would still describe the previous step.
+	 */
 	const executeNotebookNode = useCallback(
-		async (nodeId: string, prompt: string, advance: boolean) => {
+		async (
+			nodeId: string,
+			prompt: string,
+			advance: boolean,
+		): Promise<boolean> => {
 			const sessionId = sessionRef.current;
-			if (!sessionId || busy) return;
+			if (!sessionId || notebookRunningRef.current) return true;
+			notebookRunningRef.current = true;
 			const outputId = nextId("notebook-output");
 			activeNotebookNodeRef.current = nodeId;
 			activeNotebookOutputRef.current = outputId;
@@ -848,15 +873,18 @@ export function ChatApp(): React.ReactElement {
 							: state,
 					);
 				}
+				return false;
 			} catch (e) {
 				setError(String((e as Error).message ?? e));
+				return true;
 			} finally {
 				activeNotebookNodeRef.current = null;
 				activeNotebookOutputRef.current = null;
+				notebookRunningRef.current = false;
 				setBusy(false);
 			}
 		},
-		[busy],
+		[],
 	);
 
 	const send = useCallback(async () => {
@@ -867,31 +895,8 @@ export function ChatApp(): React.ReactElement {
 		setInput("");
 		resetPromptHistory();
 		if (notebook) {
-			if (editingNotebookNode) {
-				const node = notebook.nodes.find(
-					(candidate) => candidate.id === editingNotebookNode,
-				);
-				if (!node) {
-					setEditingNotebookNode(null);
-					return;
-				}
-				setNotebook((state) =>
-					state
-						? {
-								...state,
-								dirty: true,
-								nodes: state.nodes.map((candidate) =>
-									candidate.id === editingNotebookNode
-										? { ...candidate, prompt: text }
-										: candidate,
-								),
-							}
-						: state,
-				);
-				setEditingNotebookNode(null);
-				await executeNotebookNode(node.id, text, true);
-				return;
-			}
+			// WHY: prompts are edited in place on the node now, so composer input
+			// while a template is loaded is always an ad-hoc step.
 			const inputNode: NotebookNode = {
 				id: nextId("input"),
 				kind: "input",
@@ -974,14 +979,7 @@ export function ChatApp(): React.ReactElement {
 				timestamp: new Date().toISOString(),
 			});
 		}
-	}, [
-		input,
-		resetPromptHistory,
-		running,
-		notebook,
-		editingNotebookNode,
-		executeNotebookNode,
-	]);
+	}, [input, resetPromptHistory, running, notebook, executeNotebookNode]);
 
 	const navigateComposerHistory = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
@@ -1069,6 +1067,10 @@ export function ChatApp(): React.ReactElement {
 			);
 			sessionRef.current = session.sessionId;
 			setNotebook(null);
+			// Stop an in-flight run-all: its remaining steps belong to the
+			// template of the session being replaced.
+			runAllRef.current = false;
+			setEditingNotebookNode(null);
 			setTurns([]);
 			setPermission(null);
 			setConfigOptions(configured);
@@ -1207,6 +1209,15 @@ export function ChatApp(): React.ReactElement {
 		} finally {
 			setNotebookBusy(false);
 		}
+		// WHY: the locally saved template is a separate source from the GitHub
+		// index and must stay listed even when the repository read fails, so it
+		// is fetched independently and never surfaces its own error.
+		try {
+			const local = await transport.loadLocalTemplate();
+			setLocalTemplate(local.exists ? local.prompts : null);
+		} catch {
+			setLocalTemplate(null);
+		}
 	}, []);
 
 	const openNotebookPanel = useCallback(() => {
@@ -1246,26 +1257,58 @@ export function ChatApp(): React.ReactElement {
 		[notebookIndex],
 	);
 
+	/**
+	 * Persist the loaded template. A writable GitHub repository takes the
+	 * upstream path; a read-only one (or a template already loaded from the
+	 * local file) falls back to the application's template.md, which is the only
+	 * destination available without a write token.
+	 */
 	const saveNotebook = useCallback(async () => {
 		if (!notebook) return;
+		const writable = (notebookIndex?.hasToken ?? false) && !notebook.local;
 		setNotebookBusy(true);
 		setError(null);
 		try {
-			const saved = await transport.saveNotebook(
-				notebook,
-				notebookPromptsForSave(notebook.nodes),
-			);
-			setNotebook((state) =>
-				state
-					? { ...state, fileSha: saved.sha, dirty: false }
-					: state,
-			);
+			const prompts = notebookPromptsForSave(notebook.nodes);
+			if (writable) {
+				const saved = await transport.saveNotebook(notebook, prompts);
+				setNotebook((state) =>
+					state ? { ...state, fileSha: saved.sha, dirty: false } : state,
+				);
+			} else {
+				await transport.saveLocalTemplate(prompts);
+				setLocalTemplate(prompts);
+				setNotebook((state) =>
+					state ? { ...state, local: true, dirty: false } : state,
+				);
+			}
 		} catch (e) {
 			setError(String((e as Error).message ?? e));
 		} finally {
 			setNotebookBusy(false);
 		}
-	}, [notebook]);
+	}, [notebook, notebookIndex]);
+
+	/** Load the application's saved template.md as the active template. */
+	const loadLocalTemplate = useCallback(() => {
+		if (!localTemplate) return;
+		const nodes = nodesFromPrompts(localTemplate);
+		setNotebook({
+			version: 1,
+			// A local template has no upstream file, so SHAs stay empty and the
+			// source is only carried for display.
+			source: notebookIndex?.source ?? { repository: "", ref: "" },
+			notebookName: "Saved Template",
+			path: "template.md",
+			fileSha: "",
+			readmeSha: "",
+			nodes,
+			selectedNodeId: nodes[0]?.id ?? null,
+			dirty: false,
+			local: true,
+		});
+		setEditingNotebookNode(null);
+	}, [localTemplate, notebookIndex]);
 
 	const addNotebook = useCallback(
 		async (name: string, path: string) => {
@@ -1339,13 +1382,77 @@ export function ChatApp(): React.ReactElement {
 		}
 	}, [notebook, executeNotebookNode]);
 
-	const editNotebookNode = useCallback(
-		(node: NotebookNode) => {
+	/**
+	 * Run every remaining step in order, starting at the selection (or the first
+	 * step when nothing is selected). Steps are awaited one at a time because
+	 * they share a single ACP session, and ad-hoc unpinned inputs are skipped so
+	 * a run-all reproduces the template itself.
+	 */
+	const runAllNotebookNodes = useCallback(async () => {
+		const state = notebookRef.current;
+		if (!state || runAllRef.current) return;
+		const steps = state.nodes.filter((node) => node.kind === "notebook");
+		const startIndex = state.selectedNodeId
+			? steps.findIndex((node) => node.id === state.selectedNodeId)
+			: 0;
+		if (startIndex < 0) return;
+		runAllRef.current = true;
+		try {
+			for (const step of steps.slice(startIndex)) {
+				if (!runAllRef.current) break;
+				// Re-read the prompt each iteration so an edit applied mid-run is
+				// the version that executes.
+				const current = notebookRef.current?.nodes.find(
+					(node) => node.id === step.id,
+				);
+				if (!current) continue;
+				const failed = await executeNotebookNode(
+					current.id,
+					current.prompt,
+					true,
+				);
+				if (failed) break;
+			}
+		} finally {
+			runAllRef.current = false;
+		}
+	}, [executeNotebookNode]);
+
+	// WHY: editing happens in the node itself rather than in the composer, so
+	// starting an edit no longer moves text into the shared input; the composer
+	// stays free for ad-hoc prompts while a step is being edited.
+	const editNotebookNode = useCallback((node: NotebookNode) => {
+		setNotebook((state) =>
+			state ? { ...state, selectedNodeId: node.id } : state,
+		);
+		setEditingNotebookNode(node.id);
+	}, []);
+
+	const cancelEditNotebookNode = useCallback(() => {
+		setEditingNotebookNode(null);
+	}, []);
+
+	/**
+	 * Commit an in-place edit. Saving the prompt persists the template through
+	 * the same routing as the panel's Save, so an edit is durable without also
+	 * running the step — running stays on Run / Run next / Run all.
+	 */
+	const saveEditedNotebookNode = useCallback(
+		(nodeId: string, prompt: string) => {
 			setNotebook((state) =>
-				state ? { ...state, selectedNodeId: node.id } : state,
+				state
+					? {
+							...state,
+							dirty: true,
+							nodes: state.nodes.map((candidate) =>
+								candidate.id === nodeId
+									? { ...candidate, prompt }
+									: candidate,
+							),
+						}
+					: state,
 			);
-			setEditingNotebookNode(node.id);
-			setInput(node.prompt);
+			setEditingNotebookNode(null);
 		},
 		[],
 	);
@@ -1717,14 +1824,14 @@ export function ChatApp(): React.ReactElement {
 				)}
 				<HeaderActionButton
 					icon="notebook"
-					label="Open notebook"
+					label="Open templates"
 					className="notebook-toggle"
 					disabled={notebookBusy}
 					onClick={openNotebookPanel}
 				/>
 				<HeaderActionButton
 					icon="run-next"
-					label="Run next notebook node"
+					label="Run next step"
 					className="run-next"
 					disabled={
 						!ready ||
@@ -1734,15 +1841,29 @@ export function ChatApp(): React.ReactElement {
 					}
 					onClick={runNextNotebookNode}
 				/>
+				<HeaderActionButton
+					icon="run-all"
+					label="Run all steps"
+					className="run-all"
+					disabled={
+						!ready ||
+						busy ||
+						notebookBusy ||
+						!notebook?.nodes.some((node) => node.kind === "notebook")
+					}
+					onClick={() => void runAllNotebookNodes()}
+				/>
 			</header>
 
 			{notebookPanelOpen && (
 				<NotebookPanel
 					index={notebookIndex}
 					activeNotebook={notebook}
+					hasLocalTemplate={localTemplate !== null}
 					busy={notebookBusy}
 					onRefresh={() => void refreshNotebookIndex()}
 					onLoad={(entry) => void loadNotebook(entry)}
+					onLoadLocal={loadLocalTemplate}
 					onSave={() => void saveNotebook()}
 					onAdd={(name, path) => void addNotebook(name, path)}
 					onRemove={(entry) => void removeRemoteNotebook(entry)}
@@ -2080,6 +2201,10 @@ export function ChatApp(): React.ReactElement {
 							void executeNotebookNode(node.id, node.prompt, true)
 						}
 						onEdit={() => editNotebookNode(node)}
+						onSaveEdit={(prompt) =>
+							saveEditedNotebookNode(node.id, prompt)
+						}
+						onCancelEdit={cancelEditNotebookNode}
 						onRemove={() => removeNode(node)}
 						onPin={() => pinNode(node.id)}
 					/>
@@ -2124,11 +2249,7 @@ export function ChatApp(): React.ReactElement {
 					ref={textareaRef}
 					value={input}
 					placeholder={
-						ready
-							? editingNotebookNode
-								? "Edit notebook prompt and run…"
-								: READY_COMPOSER_PLACEHOLDER
-							: "Please Select Agent"
+						ready ? READY_COMPOSER_PLACEHOLDER : "Please Select Agent"
 					}
 					disabled={!ready || running || notebookBusy}
 					onChange={(e) => handleComposerChange(e.target.value)}

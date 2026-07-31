@@ -32,6 +32,7 @@ import {
 import { statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { NotebookGitHubService } from "./notebook-github";
+import { readLocalTemplate, saveLocalTemplate } from "./notebook-local";
 import { executeShellCommand } from "./shell-executor";
 import type {
 	AgentsResponse,
@@ -58,6 +59,9 @@ import type {
 	NotebookSaveRequest,
 	NotebookAddRequest,
 	NotebookRemoveRequest,
+	NotebookLocalResponse,
+	NotebookSaveLocalRequest,
+	NotebookSaveLocalResponse,
 	NotebookSessionRequest,
 	SaveNotebookSessionRequest,
 	NotebookIndexResponse,
@@ -330,6 +334,25 @@ export const routes = {
 		body: NotebookRemoveRequest,
 	): Promise<NotebookMutationResponse> =>
 		notebookGitHub.removeNotebook(body),
+
+	// ---- local template fallback (read-only repositories) -----------------
+	// Saving an edited template needs a destination even when the repository
+	// has no write token; these routes target the launched application's
+	// workbench checkout instead of GitHub.
+
+	"POST /api/notebooks/local": async (
+		ctx: RouteContext,
+	): Promise<NotebookLocalResponse> => readLocalTemplate(ctx.host.projectDir()),
+
+	"PUT /api/notebooks/save-local": async (
+		ctx: RouteContext,
+		body: NotebookSaveLocalRequest,
+	): Promise<NotebookSaveLocalResponse> => {
+		if (!Array.isArray(body.prompts)) {
+			throw new Error("Bad request: prompts is required");
+		}
+		return saveLocalTemplate(ctx.host.projectDir(), body.prompts);
+	},
 
 	// ---- pi provider config (native ~/.pi/agent/models.json) --------------
 	// OpenCode endpoint routes are intentionally absent: Pi is the managed

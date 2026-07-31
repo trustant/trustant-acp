@@ -327,6 +327,21 @@ export class AcpTransport {
 		});
 	}
 
+	// ---- local template fallback (read-only repositories) -----------------
+
+	async loadLocalTemplate(): Promise<{
+		exists: boolean;
+		prompts: string[];
+	}> {
+		return this.call("/api/notebooks/local", {});
+	}
+
+	async saveLocalTemplate(
+		prompts: string[],
+	): Promise<{ path: string; staged: boolean }> {
+		return this.call("PUT /api/notebooks/save-local", { prompts });
+	}
+
 	// ---- per-agent config + auth (endpoint/login popups) ------------------
 
 	/** Probe Pi endpoint/auth quickly through its configured /models catalog. */

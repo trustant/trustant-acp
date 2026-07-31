@@ -160,6 +160,22 @@ export interface NotebookRemoveRequest extends NotebookSourceRequest {
 	readmeSha: string;
 	path: string;
 }
+/**
+ * Local template fallback. The file name is fixed server-side, so the request
+ * carries prompts only and the response reports where the save landed.
+ */
+export interface NotebookSaveLocalRequest {
+	prompts: string[];
+}
+export interface NotebookLocalResponse {
+	exists: boolean;
+	prompts: string[];
+}
+export interface NotebookSaveLocalResponse {
+	path: string;
+	staged: boolean;
+}
+
 export interface NotebookSessionRequest {
 	sessionId: string;
 }
