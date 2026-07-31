@@ -1020,7 +1020,12 @@ session.
 
 Notebook cards show a bounded task title derived from the first Markdown
 heading or meaningful line. Full prompt text is collapsed under **Task
-details**. Editing is in place: **Edit** replaces the card body with a prompt
+details**. Each card carries its run state — pending, running, or already run —
+on its left edge and as a named badge. A step counts as run when it has output,
+so the distinction survives a session resume; a re-run reads as running rather
+than as already run. State is named as well as coloured and the running pulse is
+suppressed under reduced-motion, and selection stays a ring so the two signals
+never share a visual channel. Editing is in place: **Edit** replaces the card body with a prompt
 editor plus **Save**/**Cancel**, leaving the composer free for ad-hoc input.
 Save writes the working copy through and marks it edited; it does not run the
 step. Editing is write-through — every mutation of the persisted prompt set

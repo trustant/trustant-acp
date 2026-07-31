@@ -15,6 +15,9 @@
 	--warning-text: #a16207;
 	--notebook: #0f766e;
 	--notebook-soft: #ccfbf1;
+	/* Template step run states: pending is deliberately the quietest. */
+	--run-done: #16a34a;
+	--run-running: #d97706;
 	--mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) {
@@ -31,6 +34,8 @@
 		--warning-text: #facc15;
 		--notebook: #2dd4bf;
 		--notebook-soft: #123b37;
+		--run-done: #4ade80;
+		--run-running: #fbbf24;
 	}
 }
 
@@ -815,6 +820,56 @@ body {
 }
 .notebook-node.editing {
 	border-style: dashed;
+}
+
+/*
+ * Run state on the left edge, which already carries node identity: a pending
+ * step is muted, a completed one is solid, and the running one is both
+ * coloured and animated so it stands out from everything already finished.
+ * Selection stays a ring, so the two signals never compete.
+ */
+.notebook-node.run-pending {
+	border-left-color: color-mix(in srgb, var(--notebook) 35%, transparent);
+}
+.notebook-node.run-done {
+	border-left-color: var(--run-done);
+}
+.notebook-node.run-running {
+	border-left-color: var(--run-running);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--run-running) 30%, transparent);
+}
+.notebook-node.run-pending .notebook-node-title {
+	color: var(--muted);
+}
+.notebook-run-state {
+	padding: 0.05rem 0.4rem;
+	border-radius: 999px;
+	border: 1px solid var(--border);
+	color: var(--muted);
+	font-size: 0.65rem;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	white-space: nowrap;
+}
+.notebook-run-state.done {
+	border-color: var(--run-done);
+	color: var(--run-done);
+}
+.notebook-run-state.running {
+	border-color: var(--run-running);
+	color: var(--run-running);
+	animation: notebook-run-pulse 1.4s ease-in-out infinite;
+}
+@keyframes notebook-run-pulse {
+	50% {
+		opacity: 0.45;
+	}
+}
+/* A pulsing badge is decoration, not information; the label already says it. */
+@media (prefers-reduced-motion: reduce) {
+	.notebook-run-state.running {
+		animation: none;
+	}
 }
 .notebook-node-header,
 .notebook-node-actions {

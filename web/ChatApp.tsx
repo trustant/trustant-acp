@@ -278,6 +278,11 @@ export function ChatApp(): React.ReactElement {
 		[resetPromptHistory],
 	);
 	const activeNotebookNodeRef = useRef<string | null>(null);
+	// Mirrors activeNotebookNodeRef as state: the ref routes streamed output
+	// without re-rendering, but the running node also has to be visible.
+	const [runningNotebookNode, setRunningNotebookNode] = useState<string | null>(
+		null,
+	);
 	const activeNotebookOutputRef = useRef<string | null>(null);
 	// Mirrors `notebook` so the run-all loop reads the current prompts between
 	// awaits without re-creating the callback on every state change.
@@ -841,6 +846,7 @@ export function ChatApp(): React.ReactElement {
 			const outputId = nextId("notebook-output");
 			activeNotebookNodeRef.current = nodeId;
 			activeNotebookOutputRef.current = outputId;
+			setRunningNotebookNode(nodeId);
 			setNotebook((state) =>
 				state
 					? {
@@ -891,6 +897,7 @@ export function ChatApp(): React.ReactElement {
 				activeNotebookNodeRef.current = null;
 				activeNotebookOutputRef.current = null;
 				notebookRunningRef.current = false;
+				setRunningNotebookNode(null);
 				setBusy(false);
 			}
 		},
@@ -2352,6 +2359,7 @@ export function ChatApp(): React.ReactElement {
 						node={node}
 						selected={notebook.selectedNodeId === node.id}
 						editing={editingNotebookNode === node.id}
+						running={runningNotebookNode === node.id}
 						busy={busy || notebookBusy}
 						onSelect={() =>
 							setNotebook((state) =>

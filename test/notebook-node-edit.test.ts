@@ -12,12 +12,17 @@ const node: NotebookNode = {
 	outputs: [],
 };
 
-function view(editing: boolean, overrides: Partial<NotebookNode> = {}): string {
+function view(
+	editing: boolean,
+	overrides: Partial<NotebookNode> = {},
+	running = false,
+): string {
 	return renderToStaticMarkup(
 		React.createElement(NotebookNodeView, {
 			node: { ...node, ...overrides },
 			selected: true,
 			editing,
+			running,
 			busy: false,
 			onSelect: () => {},
 			onRun: () => {},
@@ -29,6 +34,52 @@ function view(editing: boolean, overrides: Partial<NotebookNode> = {}): string {
 		}),
 	);
 }
+
+const output = {
+	kind: "assistant" as const,
+	id: "out-1",
+	text: "done",
+	thoughts: "",
+};
+
+describe("step run state", () => {
+	it("marks a step that has not run yet", () => {
+		const html = view(false);
+		expect(html).toContain('data-run-state="pending"');
+		expect(html).toContain("run-pending");
+		expect(html).toContain("Not run");
+		expect(html).toContain('aria-label="Not yet run"');
+	});
+
+	it("marks a step that has produced output as already run", () => {
+		const html = view(false, { outputs: [output] });
+		expect(html).toContain('data-run-state="done"');
+		expect(html).toContain("run-done");
+		expect(html).toContain('aria-label="Already run"');
+	});
+
+	it("highlights the step currently in flight", () => {
+		const html = view(false, {}, true);
+		expect(html).toContain('data-run-state="running"');
+		expect(html).toContain("run-running");
+		expect(html).toContain("Running…");
+		expect(html).toContain('aria-label="Running"');
+	});
+
+	it("prefers the running state over prior output", () => {
+		// A re-run of a completed step must read as running, not as done.
+		const html = view(false, { outputs: [output] }, true);
+		expect(html).toContain('data-run-state="running"');
+		expect(html).not.toContain('data-run-state="done"');
+	});
+
+	it("keeps run state independent of selection", () => {
+		// Selection is a ring, run state is the left edge; both can be true.
+		const html = view(false, { outputs: [output] });
+		expect(html).toContain("selected");
+		expect(html).toContain("run-done");
+	});
+});
 
 describe("in-place prompt editing", () => {
 	it("shows the summarized task with Run and Edit when not editing", () => {
