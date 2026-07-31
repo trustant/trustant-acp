@@ -59,38 +59,66 @@ describe("in-place prompt editing", () => {
 	});
 });
 
-describe("local template session state", () => {
-	function state(local: unknown): Record<string, unknown> {
+describe("working copy session state", () => {
+	function state(overrides: Record<string, unknown>): Record<string, unknown> {
 		return {
 			version: 1,
 			source: { repository: "trustable-ai/templates", ref: "main" },
-			notebookName: "Saved Template",
-			path: "template.md",
+			notebookName: "Build",
+			path: "flows/build.md",
 			fileSha: "",
 			readmeSha: "",
 			nodes: [],
 			selectedNodeId: null,
 			dirty: false,
-			local,
+			...overrides,
 		};
 	}
 
-	it("preserves the local flag so a resumed session keeps saving locally", () => {
-		expect(normalizeNotebookSessionState(state(true)).local).toBe(true);
+	it("preserves provenance so a resumed session knows its origin", () => {
+		const template = {
+			name: "Build",
+			repo: "trustable-ai/templates",
+			file: "flows/build.md",
+			edited: true,
+			extra: { author: "me" },
+		};
+		expect(
+			normalizeNotebookSessionState(state({ template })).template,
+		).toEqual(template);
 	});
 
-	it("omits the flag for GitHub-backed templates", () => {
-		expect(normalizeNotebookSessionState(state(false))).not.toHaveProperty(
-			"local",
-		);
-		expect(
-			normalizeNotebookSessionState(state(undefined)),
-		).not.toHaveProperty("local");
+	it("defaults provenance when the sidecar carries none", () => {
+		expect(normalizeNotebookSessionState(state({})).template).toEqual({
+			name: "",
+			repo: "",
+			file: "",
+			edited: false,
+			extra: {},
+		});
 	});
 
-	it("ignores a non-boolean local value instead of trusting it", () => {
+	it("seeds provenance from a legacy local sidecar", () => {
+		// Sessions written before templates became working copies carry
+		// `local: true`; a resumed one should keep showing its name rather than
+		// presenting itself as an unnamed template.
+		const result = normalizeNotebookSessionState(state({ local: true }));
+		expect(result.template.name).toBe("Build");
+		expect(result.template.file).toBe("flows/build.md");
+		expect(result.template.edited).toBe(true);
+	});
+
+	it("coerces a non-boolean edited flag instead of trusting it", () => {
 		expect(
-			normalizeNotebookSessionState(state("yes")),
+			normalizeNotebookSessionState(
+				state({ template: { name: "", repo: "", file: "", edited: "yes" } }),
+			).template.edited,
+		).toBe(false);
+	});
+
+	it("drops the superseded local flag", () => {
+		expect(
+			normalizeNotebookSessionState(state({ local: true })),
 		).not.toHaveProperty("local");
 	});
 });

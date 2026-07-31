@@ -6,6 +6,7 @@ import { NotebookPanel } from "../web/NotebookPanel";
 import type {
 	NotebookIndexResponse,
 	NotebookSessionState,
+	TemplateFrontMatter,
 } from "../src/types/notebook";
 
 function index(
@@ -20,6 +21,19 @@ function index(
 	};
 }
 
+function template(
+	overrides: Partial<TemplateFrontMatter> = {},
+): TemplateFrontMatter {
+	return {
+		name: "Build",
+		repo: "trustable-ai/templates",
+		file: "build.md",
+		edited: false,
+		extra: {},
+		...overrides,
+	};
+}
+
 function activeTemplate(
 	overrides: Partial<NotebookSessionState> = {},
 ): NotebookSessionState {
@@ -28,11 +42,12 @@ function activeTemplate(
 		source: { repository: "trustable-ai/templates", ref: "main" },
 		notebookName: "Build",
 		path: "build.md",
-		fileSha: "file",
-		readmeSha: "sha",
+		fileSha: "",
+		readmeSha: "",
 		nodes: [],
 		selectedNodeId: null,
-		dirty: true,
+		dirty: false,
+		template: template(),
 		...overrides,
 	};
 }
@@ -44,12 +59,12 @@ function panel(
 		React.createElement(NotebookPanel, {
 			index: index(),
 			activeNotebook: null,
-			hasLocalTemplate: false,
+			localTemplate: null,
 			busy: false,
 			onRefresh: () => {},
-			onLoad: () => {},
-			onLoadLocal: () => {},
-			onSave: () => {},
+			onSelect: () => {},
+			onOpenLocal: () => {},
+			onSaveToGitHub: () => {},
 			onAdd: () => {},
 			onRemove: () => {},
 			onClose: () => {},
@@ -75,42 +90,77 @@ describe("template UI", () => {
 		expect(html).not.toContain("Load source");
 	});
 
-	it("hides every write control on a read-only repository and shows only a quiet hint", () => {
-		const html = panel({ activeNotebook: activeTemplate() });
-		// No warning banner, no add section, no active-template name row.
-		expect(html).not.toContain("notebook-warning");
-		expect(html).not.toContain("Add template");
-		expect(html).not.toContain("notebook-add");
-		expect(html).not.toContain("Save");
-		expect(html).not.toContain("build.md");
-		expect(html).toContain("notebook-hint");
+	it("omits the working-copy block when the application has no template", () => {
+		const html = panel();
+		expect(html).not.toContain("Working copy");
+		expect(html).not.toContain("Changed");
+		expect(html).not.toContain('aria-label="Template name"');
+	});
+
+	it("shows an unedited working copy without a changed badge or save fields", () => {
+		const html = panel({ localTemplate: template() });
+		expect(html).toContain("Build");
+		expect(html).toContain("build.md");
+		expect(html).toContain("Open");
+		expect(html).not.toContain("notebook-changed-badge");
+		expect(html).not.toContain('aria-label="Template name"');
+	});
+
+	it("highlights an edited working copy and offers the editable identity", () => {
+		const html = panel({
+			index: index({ hasToken: true }),
+			localTemplate: template({ edited: true }),
+		});
+		expect(html).toContain("notebook-working-copy changed");
+		expect(html).toContain("notebook-changed-badge");
+		expect(html).toContain('aria-label="Template name"');
+		expect(html).toContain('aria-label="Template file"');
+		expect(html).toContain("Save to GitHub");
+	});
+
+	it("still flags an edited working copy without a write token, but offers no upstream save", () => {
+		// The highlight is how the user learns their edits are local-only, so it
+		// must not be gated on the token that only the upstream save needs.
+		const html = panel({ localTemplate: template({ edited: true }) });
+		expect(html).toContain("notebook-changed-badge");
+		expect(html).toContain('aria-label="Template name"');
+		expect(html).not.toContain("Save to GitHub");
 		expect(html).toContain(
 			"add in configuration your github token to edit templates",
 		);
+	});
+
+	it("names an unsaved template rather than showing a blank heading", () => {
+		const html = panel({
+			localTemplate: template({ name: "", repo: "", file: "", edited: true }),
+		});
+		expect(html).toContain("Unnamed template");
+		expect(html).toContain("not yet saved to a repository");
+	});
+
+	it("restores add and remove controls when a write token is configured", () => {
+		const html = panel({ index: index({ hasToken: true }) });
+		expect(html).toContain("Add template");
+		expect(html).toContain("Remove Build");
+	});
+
+	it("hides add and remove controls on a read-only repository", () => {
+		const html = panel({ activeNotebook: activeTemplate() });
+		expect(html).not.toContain("notebook-warning");
+		expect(html).not.toContain("Add template");
+		expect(html).not.toContain("Remove Build");
 		expect(html).not.toContain('type="password"');
 		expect(html.toLowerCase()).not.toContain("rename");
 	});
 
-	it("restores add, remove, and save controls when a write token is configured", () => {
-		const html = panel({
-			index: index({ hasToken: true }),
-			activeNotebook: activeTemplate(),
-		});
-		expect(html).toContain("Add template");
-		expect(html).toContain("Save");
-		expect(html).toContain("build.md");
-		expect(html).not.toContain("notebook-hint");
+	it("marks the catalog entry the working copy came from", () => {
+		const html = panel({ activeNotebook: activeTemplate() });
+		expect(html).toContain("notebook-list-entry active");
 	});
 
-	it("lists a saved local template ahead of the indexed ones", () => {
-		const html = panel({ hasLocalTemplate: true });
-		expect(html).toContain("Saved Template");
-		expect(html.indexOf("Saved Template")).toBeLessThan(
-			html.indexOf("Build"),
+	it("no longer lists the working copy as a catalog entry", () => {
+		expect(panel({ localTemplate: template() })).not.toContain(
+			"Saved Template",
 		);
-	});
-
-	it("omits the saved entry when the application has no local template", () => {
-		expect(panel()).not.toContain("Saved Template");
 	});
 });

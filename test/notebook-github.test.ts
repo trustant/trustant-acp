@@ -94,12 +94,15 @@ describe("NotebookGitHubService", () => {
 	it("uses the server token for writes but never returns it", async () => {
 		const token = "github-secret";
 		const calls: RequestInit[] = [];
-		let count = 0;
 		const service = new NotebookGitHubService(
-			async (_url, init = {}) => {
+			async (url, init = {}) => {
 				calls.push(init);
-				count++;
-				if (count === 1) return content("Prompt\n", "old-sha");
+				if (String(url).includes("README.md")) {
+					return content("- [One](one.md)\n", "readme-sha");
+				}
+				if (!init.method || init.method === "GET") {
+					return content("Prompt\n", "old-sha");
+				}
 				return new Response(
 					JSON.stringify({ content: { sha: "new-sha" } }),
 					{ status: 200, headers: { "content-type": "application/json" } },
@@ -107,39 +110,223 @@ describe("NotebookGitHubService", () => {
 			},
 			() => token,
 		);
-		const result = await service.saveNotebook({
-			repository: "trustable-ai/notebooks",
+		const result = await service.saveTemplate({
+			repository: "trustable-ai/templates",
 			ref: "main",
-			path: "one.md",
-			sha: "old-sha",
+			name: "One",
+			file: "one.md",
 			prompts: ["Updated"],
 		});
-		expect(result).toEqual({ sha: "new-sha", hasToken: true });
+		expect(result.sha).toBe("new-sha");
 		expect(
-			(calls[1].headers as Record<string, string>).authorization,
-		).toBe(`Bearer ${token}`);
+			calls.some(
+				(call) =>
+					(call.headers as Record<string, string>)?.authorization ===
+					`Bearer ${token}`,
+			),
+		).toBe(true);
 		expect(JSON.stringify(result)).not.toContain(token);
 	});
 
-	it("rejects stale SHA before attempting a write", async () => {
-		let calls = 0;
+	it("leaves the index alone when the name is unchanged", async () => {
+		const writes: string[] = [];
 		const service = new NotebookGitHubService(
-			async () => {
-				calls++;
-				return content("Remote", "remote-sha");
+			async (url, init = {}) => {
+				if (init.method === "PUT") {
+					writes.push(String(url));
+					return new Response(
+						JSON.stringify({ content: { sha: "new-sha" } }),
+						{ status: 200, headers: { "content-type": "application/json" } },
+					);
+				}
+				if (String(url).includes("README.md")) {
+					return content("- [One](one.md)\n", "readme-sha");
+				}
+				return content("Prompt\n", "old-sha");
+			},
+			() => "token",
+		);
+		await service.saveTemplate({
+			repository: "trustable-ai/templates",
+			ref: "main",
+			name: "One",
+			file: "one.md",
+			prompts: ["Updated"],
+		});
+		expect(writes.filter((url) => url.includes("README.md"))).toHaveLength(0);
+	});
+
+	it("rewrites the index entry when the template is renamed", async () => {
+		let readme = "- [One](one.md) keep me\n";
+		const service = new NotebookGitHubService(
+			async (url, init = {}) => {
+				if (init.method === "PUT") {
+					const body = JSON.parse(String(init.body)) as { content: string };
+					if (String(url).includes("README.md")) {
+						readme = Buffer.from(body.content, "base64").toString("utf8");
+					}
+					return new Response(
+						JSON.stringify({ content: { sha: "new-sha" } }),
+						{ status: 200, headers: { "content-type": "application/json" } },
+					);
+				}
+				if (String(url).includes("README.md")) {
+					return content(readme, "readme-sha");
+				}
+				return content("Prompt\n", "old-sha");
+			},
+			() => "token",
+		);
+		await service.saveTemplate({
+			repository: "trustable-ai/templates",
+			ref: "main",
+			name: "Renamed",
+			file: "one.md",
+			prompts: ["Updated"],
+		});
+		expect(readme).toContain("[Renamed](one.md)");
+		expect(readme).not.toContain("[One](one.md)");
+		expect(readme).toContain("keep me");
+	});
+
+	it("indexes a template whose file does not exist yet", async () => {
+		let readme = "- [One](one.md)\n";
+		const service = new NotebookGitHubService(
+			async (url, init = {}) => {
+				if (init.method === "PUT") {
+					const body = JSON.parse(String(init.body)) as {
+						content: string;
+						sha?: string;
+					};
+					if (String(url).includes("README.md")) {
+						readme = Buffer.from(body.content, "base64").toString("utf8");
+					} else {
+						// A new file must be written without a SHA.
+						expect(body.sha).toBeUndefined();
+					}
+					return new Response(
+						JSON.stringify({ content: { sha: "new-sha" } }),
+						{ status: 200, headers: { "content-type": "application/json" } },
+					);
+				}
+				if (String(url).includes("README.md")) {
+					return content(readme, "readme-sha");
+				}
+				return new Response(JSON.stringify({ message: "Not Found" }), {
+					status: 404,
+					headers: { "content-type": "application/json" },
+				});
+			},
+			() => "token",
+		);
+		await service.saveTemplate({
+			repository: "trustable-ai/templates",
+			ref: "main",
+			name: "Fresh",
+			file: "fresh.md",
+			prompts: ["Body"],
+		});
+		expect(readme).toContain("[Fresh](fresh.md)");
+	});
+
+	it("reports a partial mutation when the index write fails", async () => {
+		const service = new NotebookGitHubService(
+			async (url, init = {}) => {
+				if (init.method === "PUT") {
+					if (String(url).includes("README.md")) {
+						return new Response(JSON.stringify({ message: "boom" }), {
+							status: 500,
+							headers: { "content-type": "application/json" },
+						});
+					}
+					return new Response(
+						JSON.stringify({ content: { sha: "new-sha" } }),
+						{ status: 200, headers: { "content-type": "application/json" } },
+					);
+				}
+				if (String(url).includes("README.md")) {
+					return content("- [One](one.md)\n", "readme-sha");
+				}
+				return content("Prompt\n", "old-sha");
 			},
 			() => "token",
 		);
 		await expect(
-			service.saveNotebook({
-				repository: "trustable-ai/notebooks",
+			service.saveTemplate({
+				repository: "trustable-ai/templates",
 				ref: "main",
-				path: "one.md",
-				sha: "stale-sha",
-				prompts: ["Local"],
+				name: "Renamed",
+				file: "one.md",
+				prompts: ["Updated"],
+			}),
+		).rejects.toThrow(/Partial mutation/);
+	});
+
+	it("refuses a name already used by another template", async () => {
+		const service = new NotebookGitHubService(
+			async (url) => {
+				if (String(url).includes("README.md")) {
+					return content("- [Taken](other.md)\n- [One](one.md)\n", "sha");
+				}
+				return content("Prompt\n", "old-sha");
+			},
+			() => "token",
+		);
+		await expect(
+			service.saveTemplate({
+				repository: "trustable-ai/templates",
+				ref: "main",
+				name: "Taken",
+				file: "one.md",
+				prompts: ["Updated"],
 			}),
 		).rejects.toThrow(/Conflict/);
-		expect(calls).toBe(1);
+	});
+
+	it("ignores a browser-supplied repository under a managed runtime", async () => {
+		// The token is issued for the configured repository; honouring a
+		// repository named in a template file would make any template a
+		// redirect for an authenticated write.
+		const previousManaged = process.env.TRUSTABLE_MANAGED_RUNTIME;
+		const previousRepository = process.env.NOTEBOOK_GITHUB_REPOSITORY;
+		process.env.TRUSTABLE_MANAGED_RUNTIME = "1";
+		process.env.NOTEBOOK_GITHUB_REPOSITORY = "managed/templates";
+		const requested: string[] = [];
+		try {
+			const service = new NotebookGitHubService(
+				async (url, init = {}) => {
+					requested.push(String(url));
+					if (init.method === "PUT") {
+						return new Response(
+							JSON.stringify({ content: { sha: "new-sha" } }),
+							{
+								status: 200,
+								headers: { "content-type": "application/json" },
+							},
+						);
+					}
+					if (String(url).includes("README.md")) {
+						return content("- [One](one.md)\n", "readme-sha");
+					}
+					return content("Prompt\n", "old-sha");
+				},
+				() => "token",
+			);
+			const result = await service.saveTemplate({
+				repository: "attacker/repo",
+				ref: "main",
+				name: "One",
+				file: "one.md",
+				prompts: ["Updated"],
+			});
+			expect(result.source.repository).toBe("managed/templates");
+			expect(
+				requested.every((url) => !url.includes("attacker/repo")),
+			).toBe(true);
+		} finally {
+			process.env.TRUSTABLE_MANAGED_RUNTIME = previousManaged;
+			process.env.NOTEBOOK_GITHUB_REPOSITORY = previousRepository;
+		}
 	});
 
 	it("redacts the token from GitHub failures", async () => {

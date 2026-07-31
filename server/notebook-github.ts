@@ -129,7 +129,11 @@ function encodedPath(path: string): string {
 
 export class NotebookGitHubService {
 	constructor(
-		private readonly fetchImpl: FetchLike = fetch,
+		// Resolved per call rather than captured at construction: the route
+		// module builds one service at import time, and binding fetch there
+		// would freeze it before a test could substitute one.
+		private readonly fetchImpl: FetchLike = (input, init) =>
+			fetch(input, init),
 		private readonly tokenProvider: () => string = () =>
 			process.env.NOTEBOOK_GITHUB_TOKEN?.trim() ?? "",
 	) {}
@@ -386,39 +390,115 @@ export class NotebookGitHubService {
 		};
 	}
 
-	async saveNotebook(request: {
+	/**
+	 * Save the workbench working copy back to the template repository.
+	 *
+	 * Prompts come from the caller's reading of `template.md`, never from the
+	 * browser, so a stale client cannot publish prompts the workbench never
+	 * held. The target repository is resolved through `source()`, which under a
+	 * managed runtime ignores the requested repository entirely — the token was
+	 * issued for the configured repository, and honouring a repository named in
+	 * a template file would turn any template into a redirect for an
+	 * authenticated write.
+	 *
+	 * The file and the README index are separate commits, so a failure between
+	 * them is reported explicitly rather than left silently half-applied.
+	 */
+	async saveTemplate(request: {
 		repository: string;
 		ref: string;
-		path: string;
-		sha: string;
+		name: string;
+		file: string;
 		prompts: string[];
-	}): Promise<{ sha: string; hasToken: boolean }> {
+	}): Promise<{
+		sha: string;
+		index: NotebookIndexResponse;
+		source: NotebookSource;
+		name: string;
+		file: string;
+	}> {
 		const source = this.source(request.repository, request.ref);
-		const path = validateNotebookPath(request.path);
-		if (!request.sha) throw new Error("Bad request: notebook SHA is required");
-		if (!Array.isArray(request.prompts)) {
-			throw new Error("Bad request: notebook prompts are required");
+		const name = validateName(request.name);
+		const path = validateNotebookPath(request.file);
+		if (!Array.isArray(request.prompts) || !request.prompts.length) {
+			throw new Error("Bad request: template prompts are required");
 		}
 		this.requireToken();
-		const current = await this.readContent(source, path).catch((error) => {
-			if (error instanceof GitHubRequestError) {
-				throw new Error(`Upstream: ${error.message}`);
-			}
-			throw error;
-		});
-		if (current.sha !== request.sha) {
-			throw new Error(
-				"Conflict: the notebook changed on GitHub; reload it before saving",
-			);
+		const readme = await this.readContent(source, "README.md");
+		const entries = parseNotebookIndex(readme.text);
+		const indexed = entries.find((candidate) => candidate.path === path);
+		// A name already used by a *different* file would make the index
+		// ambiguous, so it is rejected before anything is written.
+		if (
+			entries.some(
+				(candidate) => candidate.name === name && candidate.path !== path,
+			)
+		) {
+			throw new Error("Conflict: another template already uses that name");
 		}
+
+		let existingSha: string | undefined;
+		try {
+			existingSha = (await this.readContent(source, path)).sha;
+		} catch (error) {
+			if (!(error instanceof GitHubRequestError) || error.status !== 404) {
+				if (error instanceof GitHubRequestError) {
+					throw new Error(`Upstream: ${error.message}`);
+				}
+				throw error;
+			}
+		}
+
 		const sha = await this.writeContent(
 			source,
 			path,
 			serializeNotebookMarkdown(request.prompts),
-			`Update notebook ${path}`,
-			request.sha,
+			existingSha ? `Update template ${name}` : `Add template ${name}`,
+			existingSha,
 		);
-		return { sha, hasToken: true };
+
+		// The index only needs rewriting when the file is new or was renamed.
+		const entry: NotebookIndexEntry = {
+			name,
+			path,
+			comment: indexed?.comment ?? "",
+		};
+		if (indexed && indexed.name === name) {
+			return {
+				sha,
+				index: this.indexResult(source, readme.sha, readme.text),
+				source,
+				name,
+				file: path,
+			};
+		}
+		const updatedReadme = addNotebookIndexEntry(
+			indexed ? removeNotebookIndexEntry(readme.text, path) : readme.text,
+			entry,
+		);
+		let readmeSha: string;
+		try {
+			readmeSha = await this.writeContent(
+				source,
+				"README.md",
+				updatedReadme,
+				`Index template ${name}`,
+				readme.sha,
+			);
+		} catch (error) {
+			throw new Error(
+				`Partial mutation: template file ${path} was saved, but README.md was not updated: ${String(
+					(error as Error).message ?? error,
+				)}`,
+			);
+		}
+		return {
+			sha,
+			index: this.indexResult(source, readmeSha, updatedReadme),
+			source,
+			name,
+			file: path,
+		};
 	}
 
 	async addNotebook(request: {

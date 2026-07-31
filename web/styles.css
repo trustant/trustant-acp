@@ -711,9 +711,66 @@ body {
 	border-color: var(--notebook);
 	background: var(--notebook-soft);
 }
-/* The locally saved template heads the list and reads as a distinct source. */
-.notebook-list-entry.saved {
-	border-style: dashed;
+
+/*
+ * The workbench working copy. It sits above the catalog because it is what the
+ * session actually edits; the catalog is where copies come from and go back to.
+ */
+.notebook-working-copy {
+	margin: 1rem 0;
+	padding: 0.7rem;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+}
+.notebook-working-copy.changed {
+	border-color: var(--notebook);
+	background: var(--notebook-soft);
+}
+.notebook-working-copy-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.6rem;
+}
+.notebook-working-copy code {
+	display: block;
+	color: var(--muted);
+	font-size: 0.72rem;
+}
+.notebook-changed-badge {
+	padding: 0.1rem 0.45rem;
+	border-radius: 999px;
+	background: var(--notebook);
+	color: #fff;
+	font-size: 0.68rem;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+.notebook-save-fields {
+	display: grid;
+	gap: 0.45rem;
+	margin-top: 0.6rem;
+}
+.notebook-save-fields input {
+	width: 100%;
+	padding: 0.45rem 0.55rem;
+	border: 1px solid var(--border);
+	border-radius: 7px;
+	background: var(--bg-alt);
+	color: var(--text);
+	font: inherit;
+}
+.notebook-save-fields button {
+	padding: 0.4rem 0.75rem;
+	border: 0;
+	border-radius: 7px;
+	background: var(--notebook);
+	color: #fff;
+	cursor: pointer;
+}
+.notebook-save-fields button:disabled {
+	opacity: 0.45;
+	cursor: default;
 }
 .notebook-list-load {
 	flex: 1;

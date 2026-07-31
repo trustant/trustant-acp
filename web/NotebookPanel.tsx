@@ -1,20 +1,21 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import type {
 	NotebookIndexEntry,
 	NotebookIndexResponse,
 	NotebookSessionState,
+	TemplateFrontMatter,
 } from "../src/types/notebook";
 
 interface NotebookPanelProps {
 	index: NotebookIndexResponse | null;
 	activeNotebook: NotebookSessionState | null;
-	/** True when a local template.md exists in the launched application. */
-	hasLocalTemplate: boolean;
+	/** Front matter of the workbench template.md, or null when none exists. */
+	localTemplate: TemplateFrontMatter | null;
 	busy: boolean;
 	onRefresh: () => void;
-	onLoad: (entry: NotebookIndexEntry) => void;
-	onLoadLocal: () => void;
-	onSave: () => void;
+	onSelect: (entry: NotebookIndexEntry) => void;
+	onOpenLocal: () => void;
+	onSaveToGitHub: (name: string, file: string) => void;
 	onAdd: (name: string, path: string) => void;
 	onRemove: (entry: NotebookIndexEntry) => void;
 	onClose: () => void;
@@ -32,22 +33,35 @@ function defaultPath(name: string): string {
 export function NotebookPanel({
 	index,
 	activeNotebook,
-	hasLocalTemplate,
+	localTemplate,
 	busy,
 	onRefresh,
-	onLoad,
-	onLoadLocal,
-	onSave,
+	onSelect,
+	onOpenLocal,
+	onSaveToGitHub,
 	onAdd,
 	onRemove,
 	onClose,
 }: NotebookPanelProps): React.ReactElement {
 	const [newName, setNewName] = useState("");
 	const [newPath, setNewPath] = useState("");
-	// A repository without a write token is read-only. Rather than rendering
-	// disabled write controls plus a warning, the panel hides everything that
-	// cannot work and closes with a single quiet hint.
+	// Editable identity of the working copy. Seeded from front matter and
+	// re-seeded whenever it changes, so a save-back or a fresh selection does
+	// not leave the previous template's name in the inputs.
+	const [saveName, setSaveName] = useState(localTemplate?.name ?? "");
+	const [saveFile, setSaveFile] = useState(localTemplate?.file ?? "");
+	useEffect(() => {
+		setSaveName(localTemplate?.name ?? "");
+		setSaveFile(localTemplate?.file ?? "");
+	}, [localTemplate?.name, localTemplate?.file, localTemplate?.edited]);
+
+	// A repository without a write token cannot be published to. The catalog
+	// still reads, and the working copy still saves locally, so only the
+	// upstream controls are withheld.
 	const hasToken = index?.hasToken ?? false;
+	const changed = localTemplate?.edited ?? false;
+	// An unnamed working copy has no upstream file yet; offer one from the name.
+	const effectiveFile = saveFile.trim() || defaultPath(saveName);
 
 	return (
 		<aside className="notebook-panel" aria-label="Template panel">
@@ -81,36 +95,79 @@ export function NotebookPanel({
 				</button>
 			</div>
 
-			<div className="notebook-list" aria-label="Available templates">
-				{hasLocalTemplate && (
-					<div
-						className={`notebook-list-entry saved ${
-							activeNotebook?.local ? "active" : ""
-						}`}
-					>
+			{localTemplate && (
+				<div
+					className={`notebook-working-copy ${changed ? "changed" : ""}`}
+					aria-label="Working copy"
+				>
+					<div className="notebook-working-copy-header">
+						<div>
+							<strong>{localTemplate.name || "Unnamed template"}</strong>
+							<code>
+								{localTemplate.file
+									? `${localTemplate.repo || "local"} · ${localTemplate.file}`
+									: "not yet saved to a repository"}
+							</code>
+						</div>
+						{changed && (
+							<span className="notebook-changed-badge">Changed</span>
+						)}
 						<button
-							className="notebook-list-load"
+							className="notebook-primary"
 							disabled={busy}
-							onClick={onLoadLocal}
+							onClick={onOpenLocal}
 						>
-							<span>Saved Template</span>
-							<small>Saved in this application</small>
+							Open
 						</button>
 					</div>
-				)}
+
+					{changed && (
+						<div className="notebook-save-fields">
+							<input
+								aria-label="Template name"
+								value={saveName}
+								disabled={busy}
+								placeholder="Template name"
+								onChange={(event) => setSaveName(event.target.value)}
+							/>
+							<input
+								aria-label="Template file"
+								value={saveFile}
+								disabled={busy}
+								placeholder={defaultPath(saveName)}
+								onChange={(event) => setSaveFile(event.target.value)}
+							/>
+							{hasToken ? (
+								<button
+									disabled={busy || !saveName.trim()}
+									onClick={() =>
+										onSaveToGitHub(saveName.trim(), effectiveFile)
+									}
+								>
+									Save to GitHub
+								</button>
+							) : (
+								<div className="notebook-hint">
+									add in configuration your github token to edit templates
+								</div>
+							)}
+						</div>
+					)}
+				</div>
+			)}
+
+			<div className="notebook-list" aria-label="Available templates">
 				{index?.entries.map((entry) => (
 					<div
 						className={`notebook-list-entry ${
-							!activeNotebook?.local && activeNotebook?.path === entry.path
-								? "active"
-								: ""
+							activeNotebook?.template.file === entry.path ? "active" : ""
 						}`}
 						key={entry.path}
 					>
 						<button
 							className="notebook-list-load"
 							disabled={busy}
-							onClick={() => onLoad(entry)}
+							onClick={() => onSelect(entry)}
 						>
 							<span>{entry.name}</span>
 							{entry.comment && <small>{entry.comment}</small>}
@@ -127,26 +184,10 @@ export function NotebookPanel({
 						)}
 					</div>
 				))}
-				{index && index.entries.length === 0 && !hasLocalTemplate && (
+				{index && index.entries.length === 0 && (
 					<div className="notebook-list-empty">No templates indexed.</div>
 				)}
 			</div>
-
-			{hasToken && activeNotebook && (
-				<div className="notebook-active">
-					<div>
-						<strong>{activeNotebook.notebookName}</strong>
-						<code>{activeNotebook.path}</code>
-					</div>
-					<button
-						className="notebook-primary"
-						disabled={busy || !activeNotebook.dirty}
-						onClick={onSave}
-					>
-						Save
-					</button>
-				</div>
-			)}
 
 			{hasToken && (
 				<div className="notebook-add">
@@ -184,7 +225,7 @@ export function NotebookPanel({
 				</div>
 			)}
 
-			{index && !hasToken && (
+			{index && !hasToken && !changed && (
 				<div className="notebook-hint">
 					add in configuration your github token to edit templates
 				</div>

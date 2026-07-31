@@ -32,7 +32,11 @@ import {
 import { statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { NotebookGitHubService } from "./notebook-github";
-import { readLocalTemplate, saveLocalTemplate } from "./notebook-local";
+import {
+	readLocalTemplate,
+	sanitizeTemplateFrontMatter,
+	saveLocalTemplate,
+} from "./notebook-local";
 import { executeShellCommand } from "./shell-executor";
 import type {
 	AgentsResponse,
@@ -56,12 +60,14 @@ import type {
 	SaveMessagesRequest,
 	NotebookSourceRequest,
 	NotebookLoadRequest,
-	NotebookSaveRequest,
 	NotebookAddRequest,
 	NotebookRemoveRequest,
 	NotebookLocalResponse,
 	NotebookSaveLocalRequest,
 	NotebookSaveLocalResponse,
+	NotebookSelectRequest,
+	NotebookSaveTemplateRequest,
+	NotebookSaveTemplateResponse,
 	NotebookSessionRequest,
 	SaveNotebookSessionRequest,
 	NotebookIndexResponse,
@@ -317,11 +323,9 @@ export const routes = {
 	): Promise<NotebookDocumentResponse> =>
 		notebookGitHub.loadNotebook(body),
 
-	"PUT /api/notebooks/save": async (
-		_ctx: RouteContext,
-		body: NotebookSaveRequest,
-	): Promise<{ sha: string; hasToken: boolean }> =>
-		notebookGitHub.saveNotebook(body),
+	// `PUT /api/notebooks/save` is deliberately absent: its concurrency contract
+	// took a browser-supplied file SHA, which the working-copy model replaces —
+	// prompts now come from template.md and SHAs are read server-side.
 
 	"POST /api/notebooks/add": async (
 		_ctx: RouteContext,
@@ -335,14 +339,43 @@ export const routes = {
 	): Promise<NotebookMutationResponse> =>
 		notebookGitHub.removeNotebook(body),
 
-	// ---- local template fallback (read-only repositories) -----------------
-	// Saving an edited template needs a destination even when the repository
-	// has no write token; these routes target the launched application's
-	// workbench checkout instead of GitHub.
+	// ---- the workbench working copy ---------------------------------------
+	// A template is edited as template.md in the launched application's
+	// workbench checkout; GitHub is the catalog it is copied from and saved to.
 
 	"POST /api/notebooks/local": async (
 		ctx: RouteContext,
 	): Promise<NotebookLocalResponse> => readLocalTemplate(ctx.host.projectDir()),
+
+	/**
+	 * Copy a catalog entry into the workbench in one hop.
+	 *
+	 * Done server-side so the browser and the disk cannot disagree mid-copy,
+	 * and so provenance is recorded from the source the service actually
+	 * fetched rather than from anything the browser claims.
+	 */
+	"POST /api/notebooks/select": async (
+		ctx: RouteContext,
+		body: NotebookSelectRequest,
+	): Promise<NotebookLocalResponse> => {
+		const projectDir = ctx.host.projectDir();
+		const existing = await readLocalTemplate(projectDir);
+		if (existing.exists && existing.frontMatter.edited && body.force !== true) {
+			throw new Error(
+				"Conflict: the working copy has unsaved changes; confirm to replace it",
+			);
+		}
+		const document = await notebookGitHub.loadNotebook(body);
+		const frontMatter = {
+			name: document.name,
+			repo: document.source.repository,
+			file: document.path,
+			edited: false,
+			extra: {},
+		};
+		await saveLocalTemplate(projectDir, frontMatter, document.prompts);
+		return { exists: true, frontMatter, prompts: document.prompts };
+	},
 
 	"PUT /api/notebooks/save-local": async (
 		ctx: RouteContext,
@@ -351,7 +384,46 @@ export const routes = {
 		if (!Array.isArray(body.prompts)) {
 			throw new Error("Bad request: prompts is required");
 		}
-		return saveLocalTemplate(ctx.host.projectDir(), body.prompts);
+		// Clearing `edited` is the server's conclusion after a successful
+		// upstream save, never something a client can assert — otherwise a bug
+		// could mark diverged work as pristine and hide it from the user.
+		const frontMatter = {
+			...sanitizeTemplateFrontMatter(body.frontMatter),
+			edited: true,
+		};
+		return saveLocalTemplate(ctx.host.projectDir(), frontMatter, body.prompts);
+	},
+
+	"PUT /api/notebooks/save-template": async (
+		ctx: RouteContext,
+		body: NotebookSaveTemplateRequest,
+	): Promise<NotebookSaveTemplateResponse> => {
+		const projectDir = ctx.host.projectDir();
+		const local = await readLocalTemplate(projectDir);
+		if (!local.exists) {
+			throw new Error("Bad request: there is no working copy to save");
+		}
+		if (!local.frontMatter.edited) {
+			throw new Error("Bad request: the working copy has no changes to save");
+		}
+		const saved = await notebookGitHub.saveTemplate({
+			repository: local.frontMatter.repo,
+			ref: "",
+			name: body.name ?? "",
+			file: body.file ?? "",
+			prompts: local.prompts,
+		});
+		// Record the repository actually written, which under a managed runtime
+		// is the configured one rather than whatever the copy came from.
+		const frontMatter = {
+			...local.frontMatter,
+			name: saved.name,
+			repo: saved.source.repository,
+			file: saved.file,
+			edited: false,
+		};
+		await saveLocalTemplate(projectDir, frontMatter, local.prompts);
+		return { index: saved.index, frontMatter };
 	},
 
 	// ---- pi provider config (native ~/.pi/agent/models.json) --------------

@@ -1,31 +1,34 @@
 /**
- * Local template fallback.
+ * The workbench working copy of a template.
  *
- * When the configured template repository is read-only (no GitHub write token),
- * an edited template cannot go back to GitHub. It is instead written to a fixed
- * `template.md` at the root of the launched application's workbench checkout and
- * staged with `git add`, so the saved template travels with the application and
- * is published alongside it.
+ * A template lives as `template.md` at the root of the launched application's
+ * workbench checkout, carrying front matter that records where it was copied
+ * from and whether it has since been edited. Editing writes here; saving to
+ * GitHub reads from here. The file travels with the application and is
+ * published alongside it.
  *
- * The path is a module constant rather than request data: nothing the browser
- * sends selects a file, so this module has no traversal surface.
+ * The path is a module constant, never request data: nothing the browser sends
+ * selects a file, so this module has no traversal surface. Note in particular
+ * that `frontMatter.file` records the *origin* path inside the template
+ * repository — it is metadata written into the file's body and must never be
+ * joined onto a filesystem path.
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-	parseNotebookMarkdown,
-	serializeNotebookMarkdown,
+	EMPTY_TEMPLATE_FRONT_MATTER,
+	parseTemplateDocument,
+	serializeTemplateDocument,
 } from "../src/services/notebook";
+import type { TemplateFrontMatter } from "../src/types/notebook";
 import { executeShellCommand } from "./shell-executor";
 
-/** Workbench-relative name of the saved template. Never request-controlled. */
+/** Workbench-relative name of the working copy. Never request-controlled. */
 export const LOCAL_TEMPLATE_FILE = "template.md";
-
-/** Display name used for the saved template's entry in the template list. */
-export const LOCAL_TEMPLATE_NAME = "Saved Template";
 
 export interface LocalTemplate {
 	exists: boolean;
+	frontMatter: TemplateFrontMatter;
 	prompts: string[];
 }
 
@@ -39,8 +42,8 @@ function templatePath(projectDir: string): string {
 }
 
 /**
- * Read the saved template, if any. A missing file is an ordinary state — the
- * common case is an application that has never saved one — so it resolves to
+ * Read the working copy, if any. A missing file is an ordinary state — an
+ * application that has never used a template — so it resolves to
  * `exists: false` instead of throwing.
  */
 export async function readLocalTemplate(
@@ -50,27 +53,37 @@ export async function readLocalTemplate(
 	try {
 		markdown = await readFile(templatePath(projectDir), "utf8");
 	} catch {
-		return { exists: false, prompts: [] };
+		return {
+			exists: false,
+			frontMatter: { ...EMPTY_TEMPLATE_FRONT_MATTER, extra: {} },
+			prompts: [],
+		};
 	}
-	return { exists: true, prompts: parseNotebookMarkdown(markdown) };
+	const parsed = parseTemplateDocument(markdown);
+	return {
+		exists: true,
+		frontMatter: parsed.frontMatter,
+		prompts: parsed.prompts,
+	};
 }
 
 /**
- * Write the saved template and stage it. Serialization is shared with the
- * GitHub path so a template saved locally and one saved upstream are
- * byte-identical.
+ * Write the working copy and stage it.
  *
- * Staging is best-effort: a workbench that is not a git checkout, or a git
- * invocation that fails, still leaves a written file the user can recover, so
- * the failure is reported as `staged: false` rather than losing the save.
+ * Staging is best-effort and deliberately stops short of committing: the
+ * application's own save in Trustable already runs `git add -A` followed by a
+ * commit and push, so the template rides along with the user's other changes
+ * instead of producing commits they did not ask for. A workbench that is not a
+ * git checkout still gets the file, reported as `staged: false`.
  */
 export async function saveLocalTemplate(
 	projectDir: string,
+	frontMatter: TemplateFrontMatter,
 	prompts: string[],
 ): Promise<LocalTemplateSaveResult> {
 	await writeFile(
 		templatePath(projectDir),
-		serializeNotebookMarkdown(prompts),
+		serializeTemplateDocument(frontMatter, prompts),
 		"utf8",
 	);
 	let staged = false;
@@ -84,4 +97,59 @@ export async function saveLocalTemplate(
 		staged = false;
 	}
 	return { path: LOCAL_TEMPLATE_FILE, staged };
+}
+
+/**
+ * Bound front matter arriving from the browser before it reaches the disk.
+ *
+ * Same posture as `normalizeNotebookSessionState`: whitelist, bound, never
+ * trust. `repo` and `file` are validated for shape so the recorded provenance
+ * cannot be nonsense, even though neither ever selects a write destination.
+ */
+export function sanitizeTemplateFrontMatter(
+	value: unknown,
+): TemplateFrontMatter {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		throw new Error("Bad request: invalid template front matter");
+	}
+	const input = value as Record<string, unknown>;
+	const scalar = (field: string, max: number): string => {
+		const entry = input[field] ?? "";
+		if (typeof entry !== "string" || entry.length > max) {
+			throw new Error(`Bad request: invalid template ${field}`);
+		}
+		if (/[\r\n]/.test(entry)) {
+			throw new Error(`Bad request: template ${field} cannot span lines`);
+		}
+		return entry.trim();
+	};
+	const name = scalar("name", 200);
+	if (/[[\]]/.test(name)) {
+		throw new Error("Bad request: template name cannot contain brackets");
+	}
+	const repo = scalar("repo", 300);
+	if (repo && !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repo)) {
+		throw new Error("Bad request: template repo must be owner/repository");
+	}
+	const file = scalar("file", 500);
+	if (file && (file.includes("..") || file.startsWith("/") || !file.endsWith(".md"))) {
+		throw new Error("Bad request: template file must be a repository .md path");
+	}
+	const extra: Record<string, string> = {};
+	const rawExtra = input.extra;
+	if (rawExtra && typeof rawExtra === "object" && !Array.isArray(rawExtra)) {
+		for (const [key, entry] of Object.entries(
+			rawExtra as Record<string, unknown>,
+		)) {
+			if (
+				typeof entry === "string" &&
+				entry.length <= 500 &&
+				/^[A-Za-z_][A-Za-z0-9_-]*$/.test(key) &&
+				!["name", "repo", "file", "edited"].includes(key)
+			) {
+				extra[key] = entry.replace(/[\r\n]+/g, " ");
+			}
+		}
+	}
+	return { name, repo, file, edited: input.edited === true, extra };
 }
