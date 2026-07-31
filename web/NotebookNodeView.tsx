@@ -109,8 +109,10 @@ export function NotebookNodeView({
 				</span>
 				<div className="notebook-node-actions">
 					{node.kind === "input" ? (
-						<button title="Pin as template step" disabled={busy} onClick={onPin}>
-							Pin
+						// An ad-hoc node only exists while a template is loaded,
+						// so this is always adding to one, never creating one.
+						<button title="Add to template" disabled={busy} onClick={onPin}>
+							Add to template
 						</button>
 					) : editing ? (
 						<>

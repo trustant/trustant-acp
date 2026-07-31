@@ -1457,59 +1457,6 @@ export function ChatApp(): React.ReactElement {
 		setEditingNotebookNode(null);
 	}, [localTemplate, notebookIndex]);
 
-	const addNotebook = useCallback(
-		async (name: string, path: string) => {
-			if (!notebookIndex) return;
-			setNotebookBusy(true);
-			setError(null);
-			try {
-				const result = await transport.addNotebook(
-					notebookIndex,
-					name,
-					path,
-				);
-				setNotebookIndex(result.index);
-				if (result.notebook) {
-					// Copy it into the workbench through the same server path a
-					// catalog selection uses, so a newly added template is a
-					// working copy like any other and records the same
-					// provenance. Forced: the add itself was the confirmation.
-					const local = await transport.selectNotebook(
-						result.index,
-						{
-							name: result.notebook.name,
-							path: result.notebook.path,
-							comment: "",
-						},
-						true,
-					);
-					const nodes = nodesFromPrompts(local.prompts);
-					setNotebook({
-						version: 1,
-						source: result.notebook.source,
-						notebookName: local.frontMatter.name,
-						path: local.frontMatter.file,
-						fileSha: "",
-						readmeSha: "",
-						nodes,
-						selectedNodeId: nodes[0]?.id ?? null,
-						dirty: false,
-						template: local.frontMatter,
-					});
-					setLocalTemplate({
-						frontMatter: local.frontMatter,
-						prompts: local.prompts,
-					});
-				}
-			} catch (e) {
-				setError(String((e as Error).message ?? e));
-			} finally {
-				setNotebookBusy(false);
-			}
-		},
-		[notebookIndex],
-	);
-
 	const removeRemoteNotebook = useCallback(
 		async (entry: NotebookIndexEntry) => {
 			if (!notebookIndex) return;
@@ -2030,7 +1977,6 @@ export function ChatApp(): React.ReactElement {
 					onSaveToGitHub={(name, file) =>
 						void saveTemplateToGitHub(name, file)
 					}
-					onAdd={(name, path) => void addNotebook(name, path)}
 					onRemove={(entry) => void removeRemoteNotebook(entry)}
 					onClose={() => setNotebookPanelOpen(false)}
 				/>
@@ -2351,6 +2297,9 @@ export function ChatApp(): React.ReactElement {
 								? () => pinTurnAsTemplateStep(t)
 								: undefined
 						}
+						// Pinning is the only way to start a template, so the
+						// control says which of the two it is about to do.
+						pinLabel={notebook ? "Add to template" : "New template"}
 					/>
 				))}
 				{notebook?.nodes.map((node) => (
@@ -2548,12 +2497,15 @@ function TurnView({
 	laterTurns,
 	active,
 	onPin,
+	pinLabel = "New template",
 }: {
 	turn: Turn;
 	laterTurns: Turn[];
 	active: boolean;
 	/** Promote this message into a template step; absent when unavailable. */
 	onPin?: () => void;
+	/** Wording for the pin control; the caller knows whether one is loaded. */
+	pinLabel?: string;
 }): React.ReactElement | null {
 	if (turn.kind === "user") {
 		return (
@@ -2566,10 +2518,10 @@ function TurnView({
 						// message, not a primary control.
 						<button
 							className="copy-action"
-							title="Pin as template step"
+							title={pinLabel}
 							onClick={onPin}
 						>
-							Pin
+							{pinLabel}
 						</button>
 					)}
 				</div>

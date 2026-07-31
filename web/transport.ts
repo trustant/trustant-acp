@@ -311,20 +311,8 @@ export class AcpTransport {
 		});
 	}
 
-	async addNotebook(
-		index: NotebookIndexResponse,
-		name: string,
-		path: string,
-	): Promise<NotebookMutationResponse> {
-		return this.call("/api/notebooks/add", {
-			repository: index.source.repository,
-			ref: index.source.ref,
-			readmeSha: index.readmeSha,
-			name,
-			path,
-			prompts: ["New prompt"],
-		});
-	}
+	// There is no addNotebook: saveTemplate creates and indexes a template that
+	// does not exist yet, so creation has exactly one path.
 
 	async removeNotebook(
 		index: NotebookIndexResponse,

@@ -144,13 +144,6 @@ export interface NotebookLoadRequest extends NotebookSourceRequest {
 	path: string;
 	readmeSha: string;
 }
-export interface NotebookAddRequest extends NotebookSourceRequest {
-	readmeSha: string;
-	name: string;
-	path: string;
-	comment?: string;
-	prompts?: string[];
-}
 export interface NotebookRemoveRequest extends NotebookSourceRequest {
 	readmeSha: string;
 	path: string;

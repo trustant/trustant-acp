@@ -115,14 +115,6 @@ function validateName(name: string): string {
 	return normalized;
 }
 
-function validateComment(comment: string): string {
-	const normalized = comment.trim();
-	if (normalized.length > 500 || /[\r\n]/.test(normalized)) {
-		throw new Error("Bad request: invalid notebook comment");
-	}
-	return normalized;
-}
-
 function encodedPath(path: string): string {
 	return path.split("/").map(encodeURIComponent).join("/");
 }
@@ -498,89 +490,6 @@ export class NotebookGitHubService {
 			source,
 			name,
 			file: path,
-		};
-	}
-
-	async addNotebook(request: {
-		repository: string;
-		ref: string;
-		readmeSha: string;
-		name: string;
-		path: string;
-		comment?: string;
-		prompts?: string[];
-	}): Promise<NotebookMutationResponse> {
-		const source = this.source(request.repository, request.ref);
-		const entry: NotebookIndexEntry = {
-			name: validateName(request.name),
-			path: validateNotebookPath(request.path),
-			comment: validateComment(request.comment ?? ""),
-		};
-		this.requireToken();
-		const readme = await this.readContent(source, "README.md");
-		if (readme.sha !== request.readmeSha) {
-			throw new Error(
-				"Conflict: the notebook index changed on GitHub; reload it before adding",
-			);
-		}
-		if (
-			parseNotebookIndex(readme.text).some(
-				(candidate) =>
-					candidate.path === entry.path || candidate.name === entry.name,
-			)
-		) {
-			throw new Error("Conflict: notebook name or path already exists");
-		}
-		try {
-			await this.readContent(source, entry.path);
-			throw new Error("Conflict: notebook file already exists");
-		} catch (error) {
-			if (
-				!(error instanceof GitHubRequestError) ||
-				error.status !== 404
-			) {
-				throw error;
-			}
-		}
-		const prompts =
-			Array.isArray(request.prompts) && request.prompts.length
-				? request.prompts
-				: ["New prompt"];
-		const fileSha = await this.writeContent(
-			source,
-			entry.path,
-			serializeNotebookMarkdown(prompts),
-			`Add notebook ${entry.name}`,
-		);
-		let readmeSha: string;
-		const updatedReadme = addNotebookIndexEntry(readme.text, entry);
-		try {
-			readmeSha = await this.writeContent(
-				source,
-				"README.md",
-				updatedReadme,
-				`Index notebook ${entry.name}`,
-				readme.sha,
-			);
-		} catch (error) {
-			throw new Error(
-				`Partial mutation: notebook file ${entry.path} was created, but README.md was not updated: ${String(
-					(error as Error).message ?? error,
-				)}`,
-			);
-		}
-		const index = this.indexResult(source, readmeSha, updatedReadme);
-		return {
-			index,
-			notebook: {
-				source,
-				hasToken: true,
-				name: entry.name,
-				path: entry.path,
-				sha: fileSha,
-				readmeSha,
-				prompts,
-			},
 		};
 	}
 

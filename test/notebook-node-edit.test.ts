@@ -103,9 +103,11 @@ describe("in-place prompt editing", () => {
 		expect(html).not.toContain("Remove");
 	});
 
-	it("offers Pin instead of edit controls on an ad-hoc input node", () => {
+	it("offers add-to-template instead of edit controls on an ad-hoc input node", () => {
+		// An ad-hoc node only exists while a template is loaded, so pinning it
+		// always adds to that template rather than creating a new one.
 		const html = view(false, { kind: "input" });
-		expect(html).toContain("Pin");
+		expect(html).toContain("Add to template");
 		expect(html).not.toContain("Edit");
 	});
 });

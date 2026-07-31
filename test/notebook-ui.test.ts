@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ChatApp } from "../web/ChatApp";
 import { NotebookPanel } from "../web/NotebookPanel";
+import { NotebookNodeView } from "../web/NotebookNodeView";
 import type {
 	NotebookIndexResponse,
 	NotebookSessionState,
@@ -65,7 +66,6 @@ function panel(
 			onSelect: () => {},
 			onOpenLocal: () => {},
 			onSaveToGitHub: () => {},
-			onAdd: () => {},
 			onRemove: () => {},
 			onClose: () => {},
 			...props,
@@ -138,16 +138,24 @@ describe("template UI", () => {
 		expect(html).toContain("not yet saved to a repository");
 	});
 
-	it("restores add and remove controls when a write token is configured", () => {
+	it("restores the remove control when a write token is configured", () => {
 		const html = panel({ index: index({ hasToken: true }) });
-		expect(html).toContain("Add template");
 		expect(html).toContain("Remove Build");
 	});
 
-	it("hides add and remove controls on a read-only repository", () => {
+	it("offers no add-template form, even with a write token", () => {
+		// Save to GitHub already creates and indexes a template that does not
+		// exist, so a separate creation path would only duplicate it.
+		const html = panel({ index: index({ hasToken: true }) });
+		expect(html).not.toContain("Add template");
+		expect(html).not.toContain("notebook-add");
+		expect(html).not.toContain('aria-label="New template name"');
+		expect(html).not.toContain('aria-label="New template path"');
+	});
+
+	it("hides the remove control on a read-only repository", () => {
 		const html = panel({ activeNotebook: activeTemplate() });
 		expect(html).not.toContain("notebook-warning");
-		expect(html).not.toContain("Add template");
 		expect(html).not.toContain("Remove Build");
 		expect(html).not.toContain('type="password"');
 		expect(html.toLowerCase()).not.toContain("rename");
@@ -162,5 +170,35 @@ describe("template UI", () => {
 		expect(panel({ localTemplate: template() })).not.toContain(
 			"Saved Template",
 		);
+	});
+
+	it("labels the ad-hoc pin control as adding to the loaded template", () => {
+		// Pinning is the only way to start a template now, so the control says
+		// which of the two it does. An ad-hoc node only exists while one is
+		// loaded, so it always adds; the chat-turn variant is covered in
+		// notebook-node-edit.test.ts and by the ChatApp render above.
+		const html = renderToStaticMarkup(
+			React.createElement(NotebookNodeView, {
+				node: {
+					id: "input-1",
+					kind: "input" as const,
+					prompt: "ad-hoc",
+					outputs: [],
+				},
+				selected: false,
+				editing: false,
+				running: false,
+				busy: false,
+				onSelect: () => {},
+				onRun: () => {},
+				onEdit: () => {},
+				onSaveEdit: () => {},
+				onCancelEdit: () => {},
+				onRemove: () => {},
+				onPin: () => {},
+			}),
+		);
+		expect(html).toContain("Add to template");
+		expect(html).not.toContain(">Pin<");
 	});
 });

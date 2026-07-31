@@ -16,7 +16,6 @@ interface NotebookPanelProps {
 	onSelect: (entry: NotebookIndexEntry) => void;
 	onOpenLocal: () => void;
 	onSaveToGitHub: (name: string, file: string) => void;
-	onAdd: (name: string, path: string) => void;
 	onRemove: (entry: NotebookIndexEntry) => void;
 	onClose: () => void;
 }
@@ -39,12 +38,9 @@ export function NotebookPanel({
 	onSelect,
 	onOpenLocal,
 	onSaveToGitHub,
-	onAdd,
 	onRemove,
 	onClose,
 }: NotebookPanelProps): React.ReactElement {
-	const [newName, setNewName] = useState("");
-	const [newPath, setNewPath] = useState("");
 	// Editable identity of the working copy. Seeded from front matter and
 	// re-seeded whenever it changes, so a save-back or a fresh selection does
 	// not leave the previous template's name in the inputs.
@@ -189,41 +185,12 @@ export function NotebookPanel({
 				)}
 			</div>
 
-			{hasToken && (
-				<div className="notebook-add">
-					<strong>Add template</strong>
-					<input
-						aria-label="New template name"
-						value={newName}
-						disabled={busy}
-						placeholder="Template name"
-						onChange={(event) => {
-							const value = event.target.value;
-							setNewName(value);
-							if (!newPath || newPath === defaultPath(newName)) {
-								setNewPath(defaultPath(value));
-							}
-						}}
-					/>
-					<input
-						aria-label="New template path"
-						value={newPath}
-						disabled={busy}
-						placeholder="template-file.md"
-						onChange={(event) => setNewPath(event.target.value)}
-					/>
-					<button
-						disabled={busy || !newName.trim() || !newPath.trim()}
-						onClick={() => {
-							onAdd(newName.trim(), newPath.trim());
-							setNewName("");
-							setNewPath("");
-						}}
-					>
-						Add
-					</button>
-				</div>
-			)}
+			{/*
+			 * There is deliberately no add-template form: Save to GitHub already
+			 * creates and indexes a template that does not exist yet, so a second
+			 * creation path would only duplicate it. A new template starts by
+			 * pinning a chat message; an existing one is renamed in place.
+			 */}
 
 			{index && !hasToken && !changed && (
 				<div className="notebook-hint">

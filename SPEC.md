@@ -982,17 +982,18 @@ working copy that has unsaved edits is refused unless confirmed.
 
 A repository without a write token cannot be published to. The catalog still
 reads and the working copy still saves locally, so only the upstream controls
-are withheld: the add-template section, per-entry remove, and the Save to GitHub
-button. No warning banner is shown; an unhighlighted note reads *"add in
+are withheld: per-entry remove and the Save to GitHub button. No warning banner is shown; an unhighlighted note reads *"add in
 configuration your github token to edit templates"*. The changed highlight
 appears regardless of the token, because that is how the user learns their edits
 are local-only.
 
-REST endpoints are `POST /api/notebooks/{index,load,select,add,remove,local}`
-and `PUT /api/notebooks/{save-local,save-template}`. `save-template` takes the
-name and file only — prompts are read from `template.md` server-side, so a stale
+REST endpoints are `POST /api/notebooks/{index,load,select,remove,local}` and
+`PUT /api/notebooks/{save-local,save-template}`. `save-template` takes the name
+and file only — prompts are read from `template.md` server-side, so a stale
 client cannot publish content the workbench never held, and it updates the
-README index when a template is added or renamed. Session notebook state is
+README index when a template is added or renamed. There is no add endpoint:
+`save-template` creates and indexes a template whose file does not exist, so
+creation has exactly one path, and renaming happens in place. Session notebook state is
 persisted through `POST /api/sessions/notebook/get` and
 `PUT /api/sessions/notebook` as a whitelisted sidecar under `.acp-data`; it
 contains notebook/ad-hoc nodes, execution outputs, selection, dirty state, and
@@ -1006,7 +1007,9 @@ set. The final node clears selection. Ordinary chats follow the pre-existing
 path whenever no notebook is loaded.
 
 A template can also start from nothing. With none loaded there are no ad-hoc
-nodes to pin, so each of the user's own chat messages carries a **Pin** action:
+nodes to pin, so each of the user's own chat messages carries a pin action —
+labelled **New template** when none is loaded and **Add to template** when one
+is, since pinning is now the only way a template is created:
 the first pin creates an unnamed working copy, converts that message into the
 first step, and switches the conversation into template mode. The message's
 assistant reply is carried across so pinning does not discard what the step

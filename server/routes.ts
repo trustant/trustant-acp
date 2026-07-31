@@ -60,7 +60,6 @@ import type {
 	SaveMessagesRequest,
 	NotebookSourceRequest,
 	NotebookLoadRequest,
-	NotebookAddRequest,
 	NotebookRemoveRequest,
 	NotebookLocalResponse,
 	NotebookSaveLocalRequest,
@@ -327,11 +326,9 @@ export const routes = {
 	// took a browser-supplied file SHA, which the working-copy model replaces —
 	// prompts now come from template.md and SHAs are read server-side.
 
-	"POST /api/notebooks/add": async (
-		_ctx: RouteContext,
-		body: NotebookAddRequest,
-	): Promise<NotebookMutationResponse> =>
-		notebookGitHub.addNotebook(body),
+	// `POST /api/notebooks/add` is deliberately absent: save-template already
+	// creates and indexes a template whose file does not exist, so a second
+	// creation path would only be a second thing to keep in step.
 
 	"POST /api/notebooks/remove": async (
 		_ctx: RouteContext,
