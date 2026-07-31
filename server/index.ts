@@ -223,7 +223,7 @@ function landingPage(ctx: RouteContext): string {
  <li><code>POST /api/session/initialize</code> · <code>/new</code> · <code>/prompt</code> · <code>/cancel</code> · <code>/load</code> · <code>/resume</code> · <code>/fork</code> · <code>/list</code> · <code>/config-option</code></li>
  <li><code>POST /api/permission/respond</code></li>
  <li><code>POST /api/sessions/query</code> · <code>/messages/get</code> · <code>/delete</code> · <code>PUT /api/sessions/messages</code></li>
- <li><code>POST /api/notebooks/index</code> · <code>/load</code> · <code>/add</code> · <code>/remove</code> · <code>PUT /api/notebooks/save</code></li>
+ <li><code>POST /api/notebooks/index</code> · <code>/load</code> · <code>/select</code> · <code>/remove</code> · <code>/local</code> · <code>PUT /api/notebooks/save-local</code> · <code>/save-template</code></li>
  <li><code>WS   /ws</code> — streams <code>sessionUpdate</code> events</li>
 </ul>
 </body></html>`;

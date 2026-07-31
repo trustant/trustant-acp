@@ -15,6 +15,9 @@
 	--warning-text: #a16207;
 	--notebook: #0f766e;
 	--notebook-soft: #ccfbf1;
+	/* Template step run states: pending is deliberately the quietest. */
+	--run-done: #16a34a;
+	--run-running: #d97706;
 	--mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) {
@@ -31,6 +34,8 @@
 		--warning-text: #facc15;
 		--notebook: #2dd4bf;
 		--notebook-soft: #123b37;
+		--run-done: #4ade80;
+		--run-running: #fbbf24;
 	}
 }
 
@@ -686,20 +691,15 @@ body {
 	opacity: 0.45;
 	cursor: default;
 }
-.notebook-warning {
-	margin: 0.8rem 0;
-	padding: 0.6rem;
-	border: 1px solid #f59e0b;
-	border-radius: 8px;
-	background: #fffbeb;
-	color: #92400e;
-	font-size: 0.78rem;
-}
-@media (prefers-color-scheme: dark) {
-	.notebook-warning {
-		background: #422006;
-		color: #fcd34d;
-	}
+/*
+ * Read-only repositories get a quiet closing note instead of the old warning
+ * banner: nothing is wrong, the write controls are simply absent, so the note
+ * carries no border, background, or alert color.
+ */
+.notebook-hint {
+	margin-top: 1rem;
+	color: var(--muted);
+	font-size: 0.75rem;
 }
 .notebook-list {
 	display: flex;
@@ -715,6 +715,67 @@ body {
 .notebook-list-entry.active {
 	border-color: var(--notebook);
 	background: var(--notebook-soft);
+}
+
+/*
+ * The workbench working copy. It sits above the catalog because it is what the
+ * session actually edits; the catalog is where copies come from and go back to.
+ */
+.notebook-working-copy {
+	margin: 1rem 0;
+	padding: 0.7rem;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+}
+.notebook-working-copy.changed {
+	border-color: var(--notebook);
+	background: var(--notebook-soft);
+}
+.notebook-working-copy-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.6rem;
+}
+.notebook-working-copy code {
+	display: block;
+	color: var(--muted);
+	font-size: 0.72rem;
+}
+.notebook-changed-badge {
+	padding: 0.1rem 0.45rem;
+	border-radius: 999px;
+	background: var(--notebook);
+	color: #fff;
+	font-size: 0.68rem;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+.notebook-save-fields {
+	display: grid;
+	gap: 0.45rem;
+	margin-top: 0.6rem;
+}
+.notebook-save-fields input {
+	width: 100%;
+	padding: 0.45rem 0.55rem;
+	border: 1px solid var(--border);
+	border-radius: 7px;
+	background: var(--bg-alt);
+	color: var(--text);
+	font: inherit;
+}
+.notebook-save-fields button {
+	padding: 0.4rem 0.75rem;
+	border: 0;
+	border-radius: 7px;
+	background: var(--notebook);
+	color: #fff;
+	cursor: pointer;
+}
+.notebook-save-fields button:disabled {
+	opacity: 0.45;
+	cursor: default;
 }
 .notebook-list-load {
 	flex: 1;
@@ -760,6 +821,56 @@ body {
 .notebook-node.editing {
 	border-style: dashed;
 }
+
+/*
+ * Run state on the left edge, which already carries node identity: a pending
+ * step is muted, a completed one is solid, and the running one is both
+ * coloured and animated so it stands out from everything already finished.
+ * Selection stays a ring, so the two signals never compete.
+ */
+.notebook-node.run-pending {
+	border-left-color: color-mix(in srgb, var(--notebook) 35%, transparent);
+}
+.notebook-node.run-done {
+	border-left-color: var(--run-done);
+}
+.notebook-node.run-running {
+	border-left-color: var(--run-running);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--run-running) 30%, transparent);
+}
+.notebook-node.run-pending .notebook-node-title {
+	color: var(--muted);
+}
+.notebook-run-state {
+	padding: 0.05rem 0.4rem;
+	border-radius: 999px;
+	border: 1px solid var(--border);
+	color: var(--muted);
+	font-size: 0.65rem;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	white-space: nowrap;
+}
+.notebook-run-state.done {
+	border-color: var(--run-done);
+	color: var(--run-done);
+}
+.notebook-run-state.running {
+	border-color: var(--run-running);
+	color: var(--run-running);
+	animation: notebook-run-pulse 1.4s ease-in-out infinite;
+}
+@keyframes notebook-run-pulse {
+	50% {
+		opacity: 0.45;
+	}
+}
+/* A pulsing badge is decoration, not information; the label already says it. */
+@media (prefers-reduced-motion: reduce) {
+	.notebook-run-state.running {
+		animation: none;
+	}
+}
 .notebook-node-header,
 .notebook-node-actions {
 	display: flex;
@@ -798,6 +909,20 @@ body {
 }
 .notebook-node-task {
 	min-width: 0;
+}
+/* In-place prompt editor: matches the read view's monospace prompt rendering so
+ * text does not reflow when an edit starts. */
+.notebook-node-editor {
+	width: 100%;
+	padding: 0.5rem;
+	border: 1px solid var(--notebook);
+	border-radius: 8px;
+	background: var(--bg);
+	color: var(--text);
+	font-family: var(--mono);
+	font-size: 0.86rem;
+	line-height: 1.45;
+	resize: vertical;
 }
 .notebook-node-title {
 	margin: 0;

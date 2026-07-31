@@ -8,10 +8,12 @@ import {
 	notebookPromptsForSave,
 	parseNotebookIndex,
 	parseNotebookMarkdown,
+	parseTemplateDocument,
 	pinNotebookNode,
 	removeNotebookIndexEntry,
 	removeNotebookNode,
 	serializeNotebookMarkdown,
+	serializeTemplateDocument,
 } from "../src/services/notebook";
 import type { NotebookNode } from "../src/types/notebook";
 
@@ -21,6 +23,117 @@ function node(
 ): NotebookNode {
 	return { id, kind, prompt: id, outputs: [] };
 }
+
+describe("template front matter", () => {
+	const fm = {
+		name: "Build",
+		repo: "trustable-ai/templates",
+		file: "flows/build.md",
+		edited: false,
+		extra: {},
+	};
+
+	it("must be stripped before prompt splitting", () => {
+		// The front matter delimiter and the prompt separator are the same
+		// token, so handing a front-mattered document straight to the prompt
+		// splitter silently turns the metadata into the first prompt. This is
+		// the defect that requires the positional strip.
+		const document = serializeTemplateDocument(fm, ["first", "second"]);
+		expect(parseNotebookMarkdown(document)[0]).toContain("name: Build");
+		expect(parseTemplateDocument(document).prompts).toEqual([
+			"first",
+			"second",
+		]);
+	});
+
+	it("round-trips provenance and prompts", () => {
+		const document = serializeTemplateDocument(fm, ["one", "two\nlines"]);
+		const parsed = parseTemplateDocument(document);
+		expect(parsed.hasFrontMatter).toBe(true);
+		expect(parsed.frontMatter).toEqual(fm);
+		expect(parsed.prompts).toEqual(["one", "two\nlines"]);
+	});
+
+	it("emits every modelled key even when empty", () => {
+		const document = serializeTemplateDocument(
+			{ name: "", repo: "", file: "", edited: true, extra: {} },
+			["p"],
+		);
+		expect(document.startsWith(
+			"---\nname: \nrepo: \nfile: \nedited: true\n---\n\n",
+		)).toBe(true);
+	});
+
+	it("keeps the body byte-identical to the upstream serialization", () => {
+		const prompts = ["# A\n\nbody", "second"];
+		const document = serializeTemplateDocument(fm, prompts);
+		expect(document.endsWith(serializeNotebookMarkdown(prompts))).toBe(true);
+	});
+
+	it("treats a document without a leading delimiter as having no front matter", () => {
+		const parsed = parseTemplateDocument("just a prompt\n\n---\n\nsecond");
+		expect(parsed.hasFrontMatter).toBe(false);
+		expect(parsed.prompts).toEqual(["just a prompt", "second"]);
+	});
+
+	it("treats an unterminated block as having no front matter", () => {
+		const parsed = parseTemplateDocument("---\nname: A\n\nstill the body");
+		expect(parsed.hasFrontMatter).toBe(false);
+		expect(parsed.prompts).toEqual(["name: A\n\nstill the body"]);
+	});
+
+	it("does not swallow a distant separator as a terminator", () => {
+		const body = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n");
+		expect(parseTemplateDocument(`---\n${body}\n---\ntail`).hasFrontMatter).toBe(
+			false,
+		);
+	});
+
+	it("coerces the edited flag from the accepted spellings", () => {
+		for (const value of ["true", "TRUE", "yes", "1"]) {
+			expect(
+				parseTemplateDocument(`---\nedited: ${value}\n---\n\np`).frontMatter
+					.edited,
+			).toBe(true);
+		}
+		for (const value of ["false", "no", "0", "", "maybe"]) {
+			expect(
+				parseTemplateDocument(`---\nedited: ${value}\n---\n\np`).frontMatter
+					.edited,
+			).toBe(false);
+		}
+	});
+
+	it("prevents a value from forging a delimiter", () => {
+		const document = serializeTemplateDocument(
+			{ ...fm, name: "evil\n---\nrepo: attacker/repo" },
+			["p"],
+		);
+		const parsed = parseTemplateDocument(document);
+		expect(parsed.frontMatter.repo).toBe("trustable-ai/templates");
+		expect(parsed.prompts).toEqual(["p"]);
+	});
+
+	it("preserves unknown keys across a round trip", () => {
+		const parsed = parseTemplateDocument(
+			"---\nname: A\nauthor: me\n---\n\np",
+		);
+		expect(parsed.frontMatter.extra).toEqual({ author: "me" });
+		expect(
+			parseTemplateDocument(
+				serializeTemplateDocument(parsed.frontMatter, parsed.prompts),
+			).frontMatter.extra,
+		).toEqual({ author: "me" });
+	});
+
+	it("ignores blank and commented lines inside the block", () => {
+		const parsed = parseTemplateDocument(
+			"---\n\n# a comment\nname: A\n---\n\np",
+		);
+		expect(parsed.frontMatter.name).toBe("A");
+		expect(parsed.frontMatter.extra).toEqual({});
+	});
+});
 
 describe("notebook Markdown", () => {
 	it("parses separator lines without splitting horizontal rules inside text", () => {

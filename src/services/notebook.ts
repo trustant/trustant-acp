@@ -3,10 +3,148 @@ import type {
 	NotebookNode,
 	NotebookOutput,
 	NotebookSessionState,
+	ParsedTemplate,
+	TemplateFrontMatter,
 } from "../types/notebook";
 
 const INDEX_ENTRY =
 	/^\s*-\s+\[([^\]]+)\]\(([^)]+)\)(?:\s+(.*?))?\s*$/;
+
+/** A line that is exactly `---`, which is both delimiter and prompt separator. */
+const DELIMITER = /^\s*---\s*$/;
+
+/** Flat `key: value` front matter line. Nested YAML is deliberately not supported. */
+const FRONT_MATTER_ENTRY = /^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$/;
+
+/**
+ * Upper bound on the front matter block, in lines.
+ *
+ * Without a cap, a template whose first prompt happens to be followed by a
+ * separator far down the file would have everything above it swallowed as
+ * metadata. Four modelled keys plus room for hand-added ones.
+ */
+const FRONT_MATTER_MAX_LINES = 20;
+
+export const EMPTY_TEMPLATE_FRONT_MATTER: TemplateFrontMatter = {
+	name: "",
+	repo: "",
+	file: "",
+	edited: false,
+	extra: {},
+};
+
+/** Strip the delimiters a value could otherwise forge when re-serialized. */
+function frontMatterValue(value: string): string {
+	return value.replace(/[\r\n]+/g, " ").trim();
+}
+
+function parseBoolean(value: string): boolean {
+	const normalized = value.trim().toLowerCase();
+	return normalized === "true" || normalized === "yes" || normalized === "1";
+}
+
+/**
+ * Split a leading front matter block from the prompt body.
+ *
+ * MUST run before `parseNotebookMarkdown`. The front matter delimiter and the
+ * prompt separator are the same `---` token, so the block can only be
+ * identified positionally, as a strict file prefix — handing a front-mattered
+ * document straight to the prompt splitter silently turns the metadata into
+ * the first prompt.
+ */
+export function splitTemplateFrontMatter(markdown: string): {
+	frontMatter: TemplateFrontMatter;
+	hasFrontMatter: boolean;
+	body: string;
+} {
+	// A leading BOM would hide the opening delimiter behind an invisible
+	// character, so it is stripped before the first line is examined.
+	const lines = markdown
+		.replace(/^\uFEFF/, "")
+		.replace(/\r\n?/g, "\n")
+		.split("\n");
+	// The opener must be the very first line: a leading blank line means the
+	// document simply starts with a horizontal rule or an empty prompt.
+	if (!lines.length || !DELIMITER.test(lines[0])) {
+		return {
+			frontMatter: { ...EMPTY_TEMPLATE_FRONT_MATTER, extra: {} },
+			hasFrontMatter: false,
+			body: markdown,
+		};
+	}
+	const limit = Math.min(lines.length, FRONT_MATTER_MAX_LINES + 1);
+	let end = -1;
+	for (let i = 1; i < limit; i++) {
+		if (DELIMITER.test(lines[i])) {
+			end = i;
+			break;
+		}
+	}
+	if (end < 0) {
+		return {
+			frontMatter: { ...EMPTY_TEMPLATE_FRONT_MATTER, extra: {} },
+			hasFrontMatter: false,
+			body: markdown,
+		};
+	}
+	const frontMatter: TemplateFrontMatter = {
+		...EMPTY_TEMPLATE_FRONT_MATTER,
+		extra: {},
+	};
+	for (const line of lines.slice(1, end)) {
+		if (!line.trim() || line.trimStart().startsWith("#")) continue;
+		const match = FRONT_MATTER_ENTRY.exec(line);
+		if (!match) continue;
+		const key = match[1];
+		const value = match[2].trim().replace(/^(["'])(.*)\1$/, "$2");
+		if (key === "name") frontMatter.name = value;
+		else if (key === "repo") frontMatter.repo = value;
+		else if (key === "file") frontMatter.file = value;
+		else if (key === "edited") frontMatter.edited = parseBoolean(value);
+		else frontMatter.extra[key] = value;
+	}
+	const body = lines.slice(end + 1);
+	while (body.length && body[0].trim() === "") body.shift();
+	return { frontMatter, hasFrontMatter: true, body: body.join("\n") };
+}
+
+/** Read a `template.md`: provenance plus the prompts beneath it. */
+export function parseTemplateDocument(markdown: string): ParsedTemplate {
+	const { frontMatter, hasFrontMatter, body } =
+		splitTemplateFrontMatter(markdown);
+	return {
+		frontMatter,
+		hasFrontMatter,
+		prompts: parseNotebookMarkdown(body),
+	};
+}
+
+/**
+ * Inverse of `parseTemplateDocument`. The four modelled keys are always
+ * emitted, in a fixed order, even when empty — an explicit blank `name:` is how
+ * a template started from pinned chat announces that it has no origin yet.
+ * The body is `serializeNotebookMarkdown` unchanged, so a template saved
+ * locally is byte-identical to the same template saved upstream.
+ */
+export function serializeTemplateDocument(
+	frontMatter: TemplateFrontMatter,
+	prompts: string[],
+): string {
+	const lines = [
+		"---",
+		`name: ${frontMatterValue(frontMatter.name)}`,
+		`repo: ${frontMatterValue(frontMatter.repo)}`,
+		`file: ${frontMatterValue(frontMatter.file)}`,
+		`edited: ${frontMatter.edited ? "true" : "false"}`,
+	];
+	for (const [key, value] of Object.entries(frontMatter.extra ?? {})) {
+		if (FRONT_MATTER_ENTRY.test(`${key}: `)) {
+			lines.push(`${key}: ${frontMatterValue(value)}`);
+		}
+	}
+	lines.push("---", "");
+	return `${lines.join("\n")}\n${serializeNotebookMarkdown(prompts)}`;
+}
 
 function trimBlankEdges(lines: string[]): string {
 	let start = 0;
@@ -233,6 +371,56 @@ function normalizeOutput(value: unknown): NotebookOutput {
 }
 
 /**
+ * Bound the provenance block of a sidecar.
+ *
+ * A sidecar written before templates became workbench working copies carries
+ * `local: true` instead of a `template` block; seeding from the session's own
+ * name and path keeps a resumed session showing what it showed before, rather
+ * than presenting itself as an unnamed template.
+ */
+function normalizeTemplateFrontMatter(
+	state: Record<string, unknown>,
+	notebookName: string,
+	path: string,
+): TemplateFrontMatter {
+	const value = state.template;
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		if (state.local === true) {
+			return {
+				...EMPTY_TEMPLATE_FRONT_MATTER,
+				name: notebookName,
+				file: path,
+				edited: true,
+				extra: {},
+			};
+		}
+		return { ...EMPTY_TEMPLATE_FRONT_MATTER, extra: {} };
+	}
+	const template = value as Record<string, unknown>;
+	const extra: Record<string, string> = {};
+	if (
+		template.extra &&
+		typeof template.extra === "object" &&
+		!Array.isArray(template.extra)
+	) {
+		for (const [key, entry] of Object.entries(
+			template.extra as Record<string, unknown>,
+		)) {
+			if (typeof entry === "string" && entry.length <= 500) {
+				extra[key] = entry;
+			}
+		}
+	}
+	return {
+		name: text(template.name ?? "", "template name", 300),
+		repo: text(template.repo ?? "", "template repo", 300),
+		file: text(template.file ?? "", "template file", 500),
+		edited: template.edited === true,
+		extra,
+	};
+}
+
+/**
  * Whitelist and bound session state before writing it. Unknown fields are
  * discarded, so a malicious client cannot smuggle a token into the sidecar.
  */
@@ -274,18 +462,21 @@ export function normalizeNotebookSessionState(
 		)
 			? state.selectedNodeId
 			: null;
+	const notebookName = text(state.notebookName, "name", 300);
+	const path = text(state.path, "path", 500);
 	return {
 		version: 1,
 		source: {
 			repository: text(source.repository, "repository", 300),
 			ref: text(source.ref, "ref", 300),
 		},
-		notebookName: text(state.notebookName, "name", 300),
-		path: text(state.path, "path", 500),
+		notebookName,
+		path,
 		fileSha: text(state.fileSha, "file sha", 200),
 		readmeSha: text(state.readmeSha, "README sha", 200),
 		nodes,
 		selectedNodeId,
 		dirty: state.dirty === true,
+		template: normalizeTemplateFrontMatter(state, notebookName, path),
 	};
 }

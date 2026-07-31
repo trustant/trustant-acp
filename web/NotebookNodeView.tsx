@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { notebookPromptSummary } from "../src/services/notebook";
@@ -13,10 +13,14 @@ interface NotebookNodeViewProps {
 	node: NotebookNode;
 	selected: boolean;
 	editing: boolean;
+	/** True while this node's prompt is in flight. */
+	running: boolean;
 	busy: boolean;
 	onSelect: () => void;
 	onRun: () => void;
 	onEdit: () => void;
+	onSaveEdit: (prompt: string) => void;
+	onCancelEdit: () => void;
 	onRemove: () => void;
 	onPin: () => void;
 }
@@ -25,13 +29,27 @@ export function NotebookNodeView({
 	node,
 	selected,
 	editing,
+	running,
 	busy,
 	onSelect,
 	onRun,
 	onEdit,
+	onSaveEdit,
+	onCancelEdit,
 	onRemove,
 	onPin,
 }: NotebookNodeViewProps): React.ReactElement {
+	// WHY: the draft lives in the node being edited rather than in the shared
+	// composer, so editing one step never competes with ad-hoc input and Cancel
+	// can discard the draft without touching persisted state.
+	const [draft, setDraft] = useState(node.prompt);
+
+	// Re-seed whenever an edit starts so a cancelled edit does not leave a stale
+	// draft behind for the next one.
+	useEffect(() => {
+		if (editing) setDraft(node.prompt);
+	}, [editing, node.prompt]);
+
 	const assistantOutputs = node.outputs.filter(
 		(output): output is NotebookAssistantOutput =>
 			output.kind === "assistant",
@@ -47,12 +65,20 @@ export function NotebookNodeView({
 		if (activity) activity.scrollTop = activity.scrollHeight;
 	}, [toolOutputs.length, latestTool?.id, latestTool?.status]);
 
+	// A run appends an assistant output before the prompt is sent, so the
+	// presence of output is what distinguishes a step that has run from one
+	// still pending — including across a session resume, where no transient
+	// running flag survives.
+	const hasRun = node.outputs.length > 0;
+	const runState = running ? "running" : hasRun ? "done" : "pending";
+
 	return (
 		<section
 			className={`notebook-node ${node.kind} ${
 				selected ? "selected" : ""
-			} ${editing ? "editing" : ""}`}
+			} ${editing ? "editing" : ""} run-${runState}`}
 			data-node-kind={node.kind}
+			data-run-state={runState}
 		>
 			<div className="notebook-node-header">
 				{node.kind === "notebook" ? (
@@ -67,34 +93,78 @@ export function NotebookNodeView({
 				) : (
 					<span className="input-node-label">Ad-hoc input</span>
 				)}
+				{/* Named as well as coloured, so run state does not depend on
+				    colour perception alone. */}
+				<span
+					className={`notebook-run-state ${runState}`}
+					aria-label={
+						running
+							? "Running"
+							: hasRun
+								? "Already run"
+								: "Not yet run"
+					}
+				>
+					{running ? "Running…" : hasRun ? "Run" : "Not run"}
+				</span>
 				<div className="notebook-node-actions">
 					{node.kind === "input" ? (
-						<button title="Pin as notebook node" disabled={busy} onClick={onPin}>
-							Pin
+						// An ad-hoc node only exists while a template is loaded,
+						// so this is always adding to one, never creating one.
+						<button title="Add to template" disabled={busy} onClick={onPin}>
+							Add to template
 						</button>
+					) : editing ? (
+						<>
+							<button
+								title="Save prompt"
+								disabled={busy || !draft.trim()}
+								onClick={() => onSaveEdit(draft.trim())}
+							>
+								Save
+							</button>
+							<button title="Cancel edit" onClick={onCancelEdit}>
+								Cancel
+							</button>
+						</>
 					) : (
 						<>
-							<button title="Run node" disabled={busy} onClick={onRun}>
+							<button title="Run step" disabled={busy} onClick={onRun}>
 								Run
 							</button>
-							<button title="Edit and run" disabled={busy} onClick={onEdit}>
+							<button title="Edit prompt in place" disabled={busy} onClick={onEdit}>
 								Edit
 							</button>
 						</>
 					)}
-					<button title="Remove node" disabled={busy} onClick={onRemove}>
-						Remove
-					</button>
+					{!editing && (
+						<button title="Remove step" disabled={busy} onClick={onRemove}>
+							Remove
+						</button>
+					)}
 				</div>
 			</div>
 			<div className="notebook-node-task">
-				<h3 className="notebook-node-title">
-					{notebookPromptSummary(node.prompt)}
-				</h3>
-				<details className="notebook-node-details">
-					<summary>Task details</summary>
-					<div className="notebook-node-prompt">{node.prompt}</div>
-				</details>
+				{editing ? (
+					<textarea
+						className="notebook-node-editor"
+						aria-label="Edit prompt"
+						value={draft}
+						autoFocus
+						rows={Math.min(20, Math.max(4, draft.split("\n").length + 1))}
+						onChange={(event) => setDraft(event.target.value)}
+					/>
+				) : (
+					<>
+						<h3 className="notebook-node-title">
+							{notebookPromptSummary(node.prompt)}
+						</h3>
+						<details className="notebook-node-details">
+							<summary>Task details</summary>
+							<div className="notebook-node-prompt">{node.prompt}</div>
+						</details>
+					</>
+				)}
 			</div>
 			{assistantOutputs.map((output) => (
 				<div

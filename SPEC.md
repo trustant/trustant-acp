@@ -897,36 +897,108 @@ rejected instead of falling back to the default directory.
 
 New REST endpoints: `GET /api/directory`, `POST /api/directory`.
 
-## 10f. GitHub-backed notebook workflows
+## 10f. GitHub-backed template workflows
 
-The browser can load an ordered prompt notebook into an existing ACP session.
+The browser can load an ordered prompt template into an existing ACP session.
 The model/parser/reducer live in `src/types/notebook.ts` and
 `src/services/notebook.ts`; the GitHub Contents API client lives exclusively on
-the Node server in `server/notebook-github.ts`.
+the Node server in `server/notebook-github.ts`, and the local `template.md`
+fallback in `server/notebook-local.ts`.
 
-The default source is `trustable-ai/notebooks` on `main`. In managed mode,
+The user-visible name of this feature is **Templates**; `notebook` remains the
+wire name for types, routes, environment variables, CSS classes, and the session
+sidecar, so existing workspaces and persisted sessions keep working unchanged.
+
+The default source is `trustable-ai/templates` on `main`. In managed mode,
 Trustable's main Configure screen owns repository/ref and write access, then
 launch injects `NOTEBOOK_GITHUB_REPOSITORY`, `NOTEBOOK_GITHUB_REF`, and
 `NOTEBOOK_GITHUB_TOKEN` only into the TruACP process. Managed APIs ignore
 browser-authored source overrides. The panel displays the active source
-read-only with a Refresh action and directs missing-token users to Trustable
-Configure.
+read-only with a Refresh action.
 
 Public reads need no credential. Writes use
 `process.env.NOTEBOOK_GITHUB_TOKEN`; the browser receives only `hasToken` and
-never displays a token field. Save/add/remove are disabled without it. The
-source branch is explicit, paths are validated repository-relative Markdown
-paths, and every mutation checks the loaded SHA before sending it to GitHub.
-File/index operations are separate commits and report partial completion
-explicitly. Standalone TruACP keeps the public defaults when managed source
-variables are absent.
+never displays a token field. The source branch is explicit, paths are validated
+repository-relative Markdown paths, and every mutation checks the loaded SHA
+before sending it to GitHub. File/index operations are separate commits and
+report partial completion explicitly. Standalone TruACP keeps the public
+defaults when managed source variables are absent.
 
-REST endpoints are `POST /api/notebooks/{index,load,add,remove}` and
-`PUT /api/notebooks/save`. Session notebook state is persisted through
-`POST /api/sessions/notebook/get` and `PUT /api/sessions/notebook` as a
-whitelisted sidecar under `.acp-data`; it contains notebook/ad-hoc nodes,
-execution outputs, selection, dirty state, and source SHAs, but no credentials.
-A fork copies this sidecar. New sessions start without one.
+### The workbench working copy
+
+A template is edited as `template.md` at the root of the launched application's
+workbench checkout. GitHub is the catalog it is copied from and saved back to;
+the working copy is what the session actually runs and edits, so a template
+travels with the application and is published with it.
+
+The file carries front matter recording its provenance:
+
+```
+---
+name: Build
+repo: trustable-ai/templates
+file: flows/build.md
+edited: false
+---
+
+first prompt
+
+---
+
+second prompt
+```
+
+All four keys are always emitted, in this order, even when empty — an explicit
+blank `name:` is how a template started from pinned chat records that it has no
+origin yet. Unknown keys are preserved across a round trip.
+
+`repo` is **informational**. It records where a copy came from so the origin
+stays visible, but it never selects a write destination: save-back resolves the
+repository through the managed source, so a template file can never redirect an
+authenticated write. Under a managed runtime the recorded repository is
+therefore overridden by the configured one, and the response reports the
+repository actually written.
+
+`edited` is the definition of "changed" — set by any local edit, cleared by a
+successful save back to GitHub. It is never a content comparison, and a client
+cannot clear it: `save-local` forces it true, and only a successful upstream
+save clears it.
+
+Front matter must be split from the body **before** prompt parsing. The block
+delimiter and the prompt separator are the same `---` token, so the block can
+only be identified positionally, as a strict file prefix; handing a
+front-mattered document straight to the prompt splitter silently turns the
+metadata into the first prompt.
+
+The local file name is a server constant, never request data — in particular
+`file` records an origin path inside the template repository and is never joined
+onto a filesystem path. Staging is best-effort and deliberately stops at
+`git add`: the application's own save already commits and pushes, so the
+template rides along instead of producing commits the user did not ask for.
+
+Selecting a catalog entry copies it into the workbench in one hop, server-side,
+recording provenance from the source the service actually fetched. Replacing a
+working copy that has unsaved edits is refused unless confirmed.
+
+A repository without a write token cannot be published to. The catalog still
+reads and the working copy still saves locally, so only the upstream controls
+are withheld: per-entry remove and the Save to GitHub button. No warning banner is shown; an unhighlighted note reads *"add in
+configuration your github token to edit templates"*. The changed highlight
+appears regardless of the token, because that is how the user learns their edits
+are local-only.
+
+REST endpoints are `POST /api/notebooks/{index,load,select,remove,local}` and
+`PUT /api/notebooks/{save-local,save-template}`. `save-template` takes the name
+and file only — prompts are read from `template.md` server-side, so a stale
+client cannot publish content the workbench never held, and it updates the
+README index when a template is added or renamed. There is no add endpoint:
+`save-template` creates and indexes a template whose file does not exist, so
+creation has exactly one path, and renaming happens in place. Session notebook state is
+persisted through `POST /api/sessions/notebook/get` and
+`PUT /api/sessions/notebook` as a whitelisted sidecar under `.acp-data`; it
+contains notebook/ad-hoc nodes, execution outputs, selection, dirty state, and
+the provenance block, but no credentials. A fork copies this sidecar. New
+sessions start without one.
 
 Notebook nodes use the existing `/api/session/prompt` path. Node execution
 advances to the next persisted node exactly once; ad-hoc input is inserted
@@ -934,9 +1006,34 @@ before selection without advancing; pin promotes it into the persisted save
 set. The final node clears selection. Ordinary chats follow the pre-existing
 path whenever no notebook is loaded.
 
+A template can also start from nothing. With none loaded there are no ad-hoc
+nodes to pin, so each of the user's own chat messages carries a pin action —
+labelled **New template** when none is loaded and **Add to template** when one
+is, since pinning is now the only way a template is created:
+the first pin creates an unnamed working copy, converts that message into the
+first step, and switches the conversation into template mode. The message's
+assistant reply is carried across so pinning does not discard what the step
+produced.
+
+**Run all** runs every step from the current selection to the end, awaiting each
+one because they share a single ACP session. Ad-hoc unpinned inputs are skipped,
+each step's prompt is re-read at execution time so a mid-run edit takes effect,
+and a failed step ends the run instead of firing the remainder into a broken
+session.
+
 Notebook cards show a bounded task title derived from the first Markdown
 heading or meaningful line. Full prompt text is collapsed under **Task
-details**. Assistant output is visually primary, while tool calls share a
+details**. Each card carries its run state — pending, running, or already run —
+on its left edge and as a named badge. A step counts as run when it has output,
+so the distinction survives a session resume; a re-run reads as running rather
+than as already run. State is named as well as coloured and the running pulse is
+suppressed under reduced-motion, and selection stays a ring so the two signals
+never share a visual channel. Editing is in place: **Edit** replaces the card body with a prompt
+editor plus **Save**/**Cancel**, leaving the composer free for ad-hoc input.
+Save writes the working copy through and marks it edited; it does not run the
+step. Editing is write-through — every mutation of the persisted prompt set
+reaches disk when it is made, so durability never depends on a panel button.
+Assistant output is visually primary, while tool calls share a
 scrollable activity window with three visible rows that follows the latest
 operation without dropping history. Notebook tool rows use the same
 deterministic recovered/validator/active/terminal display projection as the

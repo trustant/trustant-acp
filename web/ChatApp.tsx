@@ -40,14 +40,22 @@ import type {
 	NotebookIndexResponse,
 	NotebookNode,
 	NotebookSessionState,
+	TemplateFrontMatter,
 } from "../src/types/notebook";
 import {
 	advanceNotebookSelection,
+	EMPTY_TEMPLATE_FRONT_MATTER,
 	insertAdHocNode,
 	notebookPromptsForSave,
 	pinNotebookNode,
 	removeNotebookNode,
 } from "../src/services/notebook";
+
+/** The workbench working copy as the local/select routes return it. */
+interface LocalTemplate {
+	frontMatter: TemplateFrontMatter;
+	prompts: string[];
+}
 import { NotebookPanel } from "./NotebookPanel";
 import { NotebookNodeView } from "./NotebookNodeView";
 import {
@@ -214,6 +222,16 @@ export function ChatApp(): React.ReactElement {
 	const [editingNotebookNode, setEditingNotebookNode] = useState<string | null>(
 		null,
 	);
+	// The workbench working copy (template.md), or null when none exists.
+	const [localTemplate, setLocalTemplate] = useState<LocalTemplate | null>(
+		null,
+	);
+	// Set while "Run all" walks the remaining steps; cleared to stop the walk
+	// after the current step when a run fails or the user starts a new session.
+	const runAllRef = useRef(false);
+	// True while a step's prompt is in flight. Guards re-entry within a single
+	// render, which the `busy` state cannot do during a sequential run-all.
+	const notebookRunningRef = useRef(false);
 
 	// Session config options (model/mode/…) exposed by the agent after connect.
 	const [configOptions, setConfigOptions] = useState<SessionConfigOption[]>(
@@ -260,7 +278,16 @@ export function ChatApp(): React.ReactElement {
 		[resetPromptHistory],
 	);
 	const activeNotebookNodeRef = useRef<string | null>(null);
+	// Mirrors activeNotebookNodeRef as state: the ref routes streamed output
+	// without re-rendering, but the running node also has to be visible.
+	const [runningNotebookNode, setRunningNotebookNode] = useState<string | null>(
+		null,
+	);
 	const activeNotebookOutputRef = useRef<string | null>(null);
+	// Mirrors `notebook` so the run-all loop reads the current prompts between
+	// awaits without re-creating the callback on every state change.
+	const notebookRef = useRef<NotebookSessionState | null>(null);
+	notebookRef.current = notebook;
 
 	// Load agent catalog. The server's defaultAgentId (pi by default) is
 	// preselected and auto-connected below; the pull-down still lets the user
@@ -799,13 +826,27 @@ export function ChatApp(): React.ReactElement {
 		void selectAgent(defaultAgentId);
 	}, [defaultAgentId, agents, selectAgent]);
 
+	/**
+	 * Run one step. Resolves true when the step failed, so a sequential run-all
+	 * can stop instead of firing the remaining prompts into a broken session.
+	 *
+	 * The in-flight guard is a ref rather than the `busy` state because run-all
+	 * calls this repeatedly within one render, where the captured state value
+	 * would still describe the previous step.
+	 */
 	const executeNotebookNode = useCallback(
-		async (nodeId: string, prompt: string, advance: boolean) => {
+		async (
+			nodeId: string,
+			prompt: string,
+			advance: boolean,
+		): Promise<boolean> => {
 			const sessionId = sessionRef.current;
-			if (!sessionId || busy) return;
+			if (!sessionId || notebookRunningRef.current) return true;
+			notebookRunningRef.current = true;
 			const outputId = nextId("notebook-output");
 			activeNotebookNodeRef.current = nodeId;
 			activeNotebookOutputRef.current = outputId;
+			setRunningNotebookNode(nodeId);
 			setNotebook((state) =>
 				state
 					? {
@@ -848,15 +889,19 @@ export function ChatApp(): React.ReactElement {
 							: state,
 					);
 				}
+				return false;
 			} catch (e) {
 				setError(String((e as Error).message ?? e));
+				return true;
 			} finally {
 				activeNotebookNodeRef.current = null;
 				activeNotebookOutputRef.current = null;
+				notebookRunningRef.current = false;
+				setRunningNotebookNode(null);
 				setBusy(false);
 			}
 		},
-		[busy],
+		[],
 	);
 
 	const send = useCallback(async () => {
@@ -867,31 +912,8 @@ export function ChatApp(): React.ReactElement {
 		setInput("");
 		resetPromptHistory();
 		if (notebook) {
-			if (editingNotebookNode) {
-				const node = notebook.nodes.find(
-					(candidate) => candidate.id === editingNotebookNode,
-				);
-				if (!node) {
-					setEditingNotebookNode(null);
-					return;
-				}
-				setNotebook((state) =>
-					state
-						? {
-								...state,
-								dirty: true,
-								nodes: state.nodes.map((candidate) =>
-									candidate.id === editingNotebookNode
-										? { ...candidate, prompt: text }
-										: candidate,
-								),
-							}
-						: state,
-				);
-				setEditingNotebookNode(null);
-				await executeNotebookNode(node.id, text, true);
-				return;
-			}
+			// WHY: prompts are edited in place on the node now, so composer input
+			// while a template is loaded is always an ad-hoc step.
 			const inputNode: NotebookNode = {
 				id: nextId("input"),
 				kind: "input",
@@ -974,14 +996,7 @@ export function ChatApp(): React.ReactElement {
 				timestamp: new Date().toISOString(),
 			});
 		}
-	}, [
-		input,
-		resetPromptHistory,
-		running,
-		notebook,
-		editingNotebookNode,
-		executeNotebookNode,
-	]);
+	}, [input, resetPromptHistory, running, notebook, executeNotebookNode]);
 
 	const navigateComposerHistory = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
@@ -1069,6 +1084,10 @@ export function ChatApp(): React.ReactElement {
 			);
 			sessionRef.current = session.sessionId;
 			setNotebook(null);
+			// Stop an in-flight run-all: its remaining steps belong to the
+			// template of the session being replaced.
+			runAllRef.current = false;
+			setEditingNotebookNode(null);
 			setTurns([]);
 			setPermission(null);
 			setConfigOptions(configured);
@@ -1207,34 +1226,100 @@ export function ChatApp(): React.ReactElement {
 		} finally {
 			setNotebookBusy(false);
 		}
+		// WHY: the working copy is independent of the GitHub catalog and must
+		// stay visible even when the repository read fails, so it is fetched
+		// separately and never surfaces its own error.
+		try {
+			const local = await transport.loadLocalTemplate();
+			setLocalTemplate(
+				local.exists
+					? { frontMatter: local.frontMatter, prompts: local.prompts }
+					: null,
+			);
+		} catch {
+			setLocalTemplate(null);
+		}
 	}, []);
+
+	/**
+	 * Write the working copy to disk.
+	 *
+	 * Every mutation of the persisted prompt set routes through here, so an
+	 * edit is durable the moment it is made rather than depending on a panel
+	 * button — which previously did not exist at all without a write token.
+	 */
+	const persistWorkingCopy = useCallback(
+		async (nodes: NotebookNode[], overrides: Partial<TemplateFrontMatter> = {}) => {
+			const state = notebookRef.current;
+			if (!state) return;
+			const frontMatter: TemplateFrontMatter = {
+				...state.template,
+				...overrides,
+				edited: true,
+			};
+			const prompts = notebookPromptsForSave(nodes);
+			try {
+				await transport.saveLocalTemplate(frontMatter, prompts);
+				setLocalTemplate({ frontMatter, prompts });
+				setNotebook((current) =>
+					current ? { ...current, template: frontMatter, dirty: false } : current,
+				);
+			} catch (e) {
+				// Leave `dirty` set so the unsaved state stays visible.
+				setError(String((e as Error).message ?? e));
+			}
+		},
+		[],
+	);
 
 	const openNotebookPanel = useCallback(() => {
 		setNotebookPanelOpen(true);
 		if (!notebookIndex) void refreshNotebookIndex();
 	}, [notebookIndex, refreshNotebookIndex]);
 
-	const loadNotebook = useCallback(
+	/**
+	 * Copy a catalog entry into the workbench and load it.
+	 *
+	 * Replacing a working copy that has unsaved edits would discard them, so
+	 * the server refuses and the user is asked before it is retried with force.
+	 */
+	const selectNotebook = useCallback(
 		async (entry: NotebookIndexEntry) => {
 			if (!notebookIndex) return;
 			setNotebookBusy(true);
 			setError(null);
 			try {
-				const document = await transport.loadNotebook(
-					notebookIndex,
-					entry,
-				);
-				const nodes = nodesFromPrompts(document.prompts);
+				let local;
+				try {
+					local = await transport.selectNotebook(notebookIndex, entry);
+				} catch (e) {
+					const message = String((e as Error).message ?? e);
+					if (!message.startsWith("Conflict:")) throw e;
+					if (
+						!window.confirm(
+							"The working copy has unsaved changes that will be lost. Replace it?",
+						)
+					) {
+						return;
+					}
+					local = await transport.selectNotebook(notebookIndex, entry, true);
+				}
+				const nodes = nodesFromPrompts(local.prompts);
 				setNotebook({
 					version: 1,
-					source: document.source,
-					notebookName: document.name,
-					path: document.path,
-					fileSha: document.sha,
-					readmeSha: document.readmeSha,
+					source: notebookIndex.source,
+					notebookName: local.frontMatter.name,
+					path: local.frontMatter.file,
+					fileSha: "",
+					readmeSha: "",
 					nodes,
 					selectedNodeId: nodes[0]?.id ?? null,
 					dirty: false,
+					template: local.frontMatter,
+				});
+				setLocalTemplate({
+					frontMatter: local.frontMatter,
+					prompts: local.prompts,
 				});
 				setEditingNotebookNode(null);
 			} catch (e) {
@@ -1246,66 +1331,136 @@ export function ChatApp(): React.ReactElement {
 		[notebookIndex],
 	);
 
-	const saveNotebook = useCallback(async () => {
-		if (!notebook) return;
-		setNotebookBusy(true);
-		setError(null);
-		try {
-			const saved = await transport.saveNotebook(
-				notebook,
-				notebookPromptsForSave(notebook.nodes),
-			);
-			setNotebook((state) =>
-				state
-					? { ...state, fileSha: saved.sha, dirty: false }
-					: state,
-			);
-		} catch (e) {
-			setError(String((e as Error).message ?? e));
-		} finally {
-			setNotebookBusy(false);
-		}
-	}, [notebook]);
-
-	const addNotebook = useCallback(
-		async (name: string, path: string) => {
-			if (!notebookIndex) return;
+	/**
+	 * Publish the working copy to the template repository under the name and
+	 * file the user chose, then mark it no longer edited.
+	 */
+	const saveTemplateToGitHub = useCallback(
+		async (name: string, file: string) => {
 			setNotebookBusy(true);
 			setError(null);
 			try {
-				const result = await transport.addNotebook(
-					notebookIndex,
-					name,
-					path,
+				const saved = await transport.saveTemplate(name, file);
+				setNotebookIndex(saved.index);
+				setLocalTemplate((current) =>
+					current ? { ...current, frontMatter: saved.frontMatter } : current,
 				);
-				setNotebookIndex(result.index);
-				if (result.notebook) {
-					const nodes = nodesFromPrompts(result.notebook.prompts);
-					setNotebook({
-						version: 1,
-						source: result.notebook.source,
-						notebookName: result.notebook.name,
-						path: result.notebook.path,
-						fileSha: result.notebook.sha,
-						readmeSha: result.notebook.readmeSha,
-						nodes,
-						selectedNodeId: nodes[0]?.id ?? null,
-						dirty: false,
-					});
-				}
+				setNotebook((state) =>
+					state
+						? {
+								...state,
+								notebookName: saved.frontMatter.name,
+								path: saved.frontMatter.file,
+								template: saved.frontMatter,
+								dirty: false,
+							}
+						: state,
+				);
 			} catch (e) {
 				setError(String((e as Error).message ?? e));
 			} finally {
 				setNotebookBusy(false);
 			}
 		},
-		[notebookIndex],
+		[],
 	);
+
+	/**
+	 * Promote an ordinary chat message into a template step.
+	 *
+	 * This is how a template starts from nothing: with none loaded there are no
+	 * ad-hoc nodes to pin, so the first pin creates an unnamed working copy and
+	 * switches the conversation into template mode. The turn's assistant reply
+	 * is carried across so pinning does not discard what the step produced.
+	 */
+	const pinTurnAsTemplateStep = useCallback(
+		(turn: Turn) => {
+			if (turn.kind !== "user") return;
+			const reply = turns.find(
+				(candidate, index) =>
+					candidate.kind === "assistant" &&
+					index > turns.findIndex((t) => t.id === turn.id),
+			);
+			const node: NotebookNode = {
+				id: nextId("notebook"),
+				kind: "notebook",
+				prompt: turn.text,
+				outputs:
+					reply && reply.kind === "assistant"
+						? [
+								{
+									kind: "assistant",
+									id: nextId("notebook-output"),
+									text: reply.text ?? "",
+									thoughts: reply.thoughts ?? "",
+								},
+							]
+						: [],
+			};
+			const state = notebookRef.current;
+			const nodes = state ? [...state.nodes, node] : [node];
+			const frontMatter: TemplateFrontMatter =
+				state?.template ?? { ...EMPTY_TEMPLATE_FRONT_MATTER, extra: {} };
+			setNotebook((current) =>
+				current
+					? { ...current, nodes, dirty: true }
+					: {
+							version: 1,
+							source: notebookIndex?.source ?? { repository: "", ref: "" },
+							notebookName: "",
+							path: "",
+							fileSha: "",
+							readmeSha: "",
+							nodes,
+							selectedNodeId: node.id,
+							dirty: true,
+							template: frontMatter,
+						},
+			);
+			// notebookRef is assigned during render, so seed it here to let the
+			// persist helper see the template that was just created.
+			notebookRef.current = {
+				version: 1,
+				source: notebookIndex?.source ?? { repository: "", ref: "" },
+				notebookName: state?.notebookName ?? "",
+				path: state?.path ?? "",
+				fileSha: "",
+				readmeSha: "",
+				nodes,
+				selectedNodeId: state?.selectedNodeId ?? node.id,
+				dirty: true,
+				template: frontMatter,
+			};
+			void persistWorkingCopy(nodes);
+		},
+		[turns, notebookIndex, persistWorkingCopy],
+	);
+
+	/** Load the workbench working copy as the active template. */
+	const openWorkingCopy = useCallback(() => {
+		if (!localTemplate) return;
+		const nodes = nodesFromPrompts(localTemplate.prompts);
+		setNotebook({
+			version: 1,
+			source: notebookIndex?.source ?? { repository: "", ref: "" },
+			notebookName: localTemplate.frontMatter.name,
+			path: localTemplate.frontMatter.file,
+			// SHAs are read server-side at save time; the working copy is the
+			// source of truth for content.
+			fileSha: "",
+			readmeSha: "",
+			nodes,
+			selectedNodeId: nodes[0]?.id ?? null,
+			dirty: false,
+			template: localTemplate.frontMatter,
+		});
+		setEditingNotebookNode(null);
+	}, [localTemplate, notebookIndex]);
 
 	const removeRemoteNotebook = useCallback(
 		async (entry: NotebookIndexEntry) => {
 			if (!notebookIndex) return;
-			if (!window.confirm(`Remove notebook "${entry.name}" from GitHub?`)) {
+			if (!window.confirm(`Remove template "${entry.name}" from GitHub?`)) {
 				return;
 			}
 			setNotebookBusy(true);
@@ -1316,10 +1471,9 @@ export function ChatApp(): React.ReactElement {
 					entry,
 				);
 				setNotebookIndex(result.index);
-				if (notebook?.path === entry.path) {
-					setNotebook(null);
-					setEditingNotebookNode(null);
-				}
+				// The working copy is deliberately left alone: removing a
+				// catalog entry unpublishes the template, it does not delete
+				// the user's copy of it in this application.
 			} catch (e) {
 				setError(String((e as Error).message ?? e));
 			} finally {
@@ -1339,47 +1493,110 @@ export function ChatApp(): React.ReactElement {
 		}
 	}, [notebook, executeNotebookNode]);
 
-	const editNotebookNode = useCallback(
-		(node: NotebookNode) => {
-			setNotebook((state) =>
-				state ? { ...state, selectedNodeId: node.id } : state,
-			);
-			setEditingNotebookNode(node.id);
-			setInput(node.prompt);
-		},
-		[],
-	);
+	/**
+	 * Run every remaining step in order, starting at the selection (or the first
+	 * step when nothing is selected). Steps are awaited one at a time because
+	 * they share a single ACP session, and ad-hoc unpinned inputs are skipped so
+	 * a run-all reproduces the template itself.
+	 */
+	const runAllNotebookNodes = useCallback(async () => {
+		const state = notebookRef.current;
+		if (!state || runAllRef.current) return;
+		const steps = state.nodes.filter((node) => node.kind === "notebook");
+		const startIndex = state.selectedNodeId
+			? steps.findIndex((node) => node.id === state.selectedNodeId)
+			: 0;
+		if (startIndex < 0) return;
+		runAllRef.current = true;
+		try {
+			for (const step of steps.slice(startIndex)) {
+				if (!runAllRef.current) break;
+				// Re-read the prompt each iteration so an edit applied mid-run is
+				// the version that executes.
+				const current = notebookRef.current?.nodes.find(
+					(node) => node.id === step.id,
+				);
+				if (!current) continue;
+				const failed = await executeNotebookNode(
+					current.id,
+					current.prompt,
+					true,
+				);
+				if (failed) break;
+			}
+		} finally {
+			runAllRef.current = false;
+		}
+	}, [executeNotebookNode]);
 
-	const pinNode = useCallback((nodeId: string) => {
+	// WHY: editing happens in the node itself rather than in the composer, so
+	// starting an edit no longer moves text into the shared input; the composer
+	// stays free for ad-hoc prompts while a step is being edited.
+	const editNotebookNode = useCallback((node: NotebookNode) => {
 		setNotebook((state) =>
-			state
-				? {
-						...state,
-						nodes: pinNotebookNode(state.nodes, nodeId),
-						dirty: true,
-					}
-				: state,
+			state ? { ...state, selectedNodeId: node.id } : state,
 		);
+		setEditingNotebookNode(node.id);
 	}, []);
 
-	const removeNode = useCallback((node: NotebookNode) => {
-		setNotebook((state) => {
-			if (!state) return state;
+	const cancelEditNotebookNode = useCallback(() => {
+		setEditingNotebookNode(null);
+	}, []);
+
+	/**
+	 * Commit an in-place edit: update the node and write the working copy.
+	 * Saving does not run the step — running stays on Run / Run next / Run all.
+	 */
+	const saveEditedNotebookNode = useCallback(
+		(nodeId: string, prompt: string) => {
+			const state = notebookRef.current;
+			if (!state) return;
+			const nodes = state.nodes.map((candidate) =>
+				candidate.id === nodeId ? { ...candidate, prompt } : candidate,
+			);
+			setNotebook((current) =>
+				current ? { ...current, nodes, dirty: true } : current,
+			);
+			setEditingNotebookNode(null);
+			void persistWorkingCopy(nodes);
+		},
+		[persistWorkingCopy],
+	);
+
+	const pinNode = useCallback(
+		(nodeId: string) => {
+			const state = notebookRef.current;
+			if (!state) return;
+			const nodes = pinNotebookNode(state.nodes, nodeId);
+			setNotebook((current) =>
+				current ? { ...current, nodes, dirty: true } : current,
+			);
+			void persistWorkingCopy(nodes);
+		},
+		[persistWorkingCopy],
+	);
+
+	const removeNode = useCallback(
+		(node: NotebookNode) => {
+			const state = notebookRef.current;
+			if (!state) return;
 			const removed = removeNotebookNode(
 				state.nodes,
 				node.id,
 				state.selectedNodeId,
 			);
-			return {
-				...state,
-				...removed,
-				dirty: state.dirty || node.kind === "notebook",
-			};
-		});
-		setEditingNotebookNode((current) =>
-			current === node.id ? null : current,
-		);
-	}, []);
+			setNotebook((current) =>
+				current ? { ...current, ...removed, dirty: true } : current,
+			);
+			setEditingNotebookNode((current) =>
+				current === node.id ? null : current,
+			);
+			// Removing an ad-hoc input changes nothing persisted, but removing a
+			// step does; persisting unconditionally keeps disk and view in step.
+			void persistWorkingCopy(removed.nodes);
+		},
+		[persistWorkingCopy],
+	);
 
 	const respond = useCallback(
 		async (optionId: string) => {
@@ -1717,14 +1934,14 @@ export function ChatApp(): React.ReactElement {
 				)}
 				<HeaderActionButton
 					icon="notebook"
-					label="Open notebook"
+					label="Open templates"
 					className="notebook-toggle"
 					disabled={notebookBusy}
 					onClick={openNotebookPanel}
 				/>
 				<HeaderActionButton
 					icon="run-next"
-					label="Run next notebook node"
+					label="Run next step"
 					className="run-next"
 					disabled={
 						!ready ||
@@ -1734,17 +1951,32 @@ export function ChatApp(): React.ReactElement {
 					}
 					onClick={runNextNotebookNode}
 				/>
+				<HeaderActionButton
+					icon="run-all"
+					label="Run all steps"
+					className="run-all"
+					disabled={
+						!ready ||
+						busy ||
+						notebookBusy ||
+						!notebook?.nodes.some((node) => node.kind === "notebook")
+					}
+					onClick={() => void runAllNotebookNodes()}
+				/>
 			</header>
 
 			{notebookPanelOpen && (
 				<NotebookPanel
 					index={notebookIndex}
 					activeNotebook={notebook}
+					localTemplate={localTemplate?.frontMatter ?? null}
 					busy={notebookBusy}
 					onRefresh={() => void refreshNotebookIndex()}
-					onLoad={(entry) => void loadNotebook(entry)}
-					onSave={() => void saveNotebook()}
-					onAdd={(name, path) => void addNotebook(name, path)}
+					onSelect={(entry) => void selectNotebook(entry)}
+					onOpenLocal={openWorkingCopy}
+					onSaveToGitHub={(name, file) =>
+						void saveTemplateToGitHub(name, file)
+					}
 					onRemove={(entry) => void removeRemoteNotebook(entry)}
 					onClose={() => setNotebookPanelOpen(false)}
 				/>
@@ -2060,6 +2292,14 @@ export function ChatApp(): React.ReactElement {
 						turn={t}
 						laterTurns={turns.slice(index + 1)}
 						active={running}
+						onPin={
+							t.kind === "user" && !busy
+								? () => pinTurnAsTemplateStep(t)
+								: undefined
+						}
+						// Pinning is the only way to start a template, so the
+						// control says which of the two it is about to do.
+						pinLabel={notebook ? "Add to template" : "New template"}
 					/>
 				))}
 				{notebook?.nodes.map((node) => (
@@ -2068,6 +2308,7 @@ export function ChatApp(): React.ReactElement {
 						node={node}
 						selected={notebook.selectedNodeId === node.id}
 						editing={editingNotebookNode === node.id}
+						running={runningNotebookNode === node.id}
 						busy={busy || notebookBusy}
 						onSelect={() =>
 							setNotebook((state) =>
@@ -2080,6 +2321,10 @@ export function ChatApp(): React.ReactElement {
 							void executeNotebookNode(node.id, node.prompt, true)
 						}
 						onEdit={() => editNotebookNode(node)}
+						onSaveEdit={(prompt) =>
+							saveEditedNotebookNode(node.id, prompt)
+						}
+						onCancelEdit={cancelEditNotebookNode}
 						onRemove={() => removeNode(node)}
 						onPin={() => pinNode(node.id)}
 					/>
@@ -2124,11 +2369,7 @@ export function ChatApp(): React.ReactElement {
 					ref={textareaRef}
 					value={input}
 					placeholder={
-						ready
-							? editingNotebookNode
-								? "Edit notebook prompt and run…"
-								: READY_COMPOSER_PLACEHOLDER
-							: "Please Select Agent"
+						ready ? READY_COMPOSER_PLACEHOLDER : "Please Select Agent"
 					}
 					disabled={!ready || running || notebookBusy}
 					onChange={(e) => handleComposerChange(e.target.value)}
@@ -2255,10 +2496,16 @@ function TurnView({
 	turn,
 	laterTurns,
 	active,
+	onPin,
+	pinLabel = "New template",
 }: {
 	turn: Turn;
 	laterTurns: Turn[];
 	active: boolean;
+	/** Promote this message into a template step; absent when unavailable. */
+	onPin?: () => void;
+	/** Wording for the pin control; the caller knows whether one is loaded. */
+	pinLabel?: string;
 }): React.ReactElement | null {
 	if (turn.kind === "user") {
 		return (
@@ -2266,6 +2513,17 @@ function TurnView({
 				<div className="bubble">{turn.text}</div>
 				<div className="turn-actions">
 					<CopyAction text={turn.text} />
+					{onPin && (
+						// Same affordance as Copy: a quiet inline action on the
+						// message, not a primary control.
+						<button
+							className="copy-action"
+							title={pinLabel}
+							onClick={onPin}
+						>
+							{pinLabel}
+						</button>
+					)}
 				</div>
 			</div>
 		);

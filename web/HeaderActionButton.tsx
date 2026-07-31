@@ -5,7 +5,8 @@ export type HeaderActionIcon =
 	| "new-session"
 	| "history"
 	| "notebook"
-	| "run-next";
+	| "run-next"
+	| "run-all";
 
 const ICON_PATHS: Record<HeaderActionIcon, string[]> = {
 	settings: [
@@ -25,6 +26,9 @@ const ICON_PATHS: Record<HeaderActionIcon, string[]> = {
 		"M8 16h5",
 	],
 	"run-next": ["m5 4 11 8-11 8z", "M20 5v14"],
+	// Double play: "run every remaining step", distinct at a glance from the
+	// single play-with-bar that runs only the next one.
+	"run-all": ["m3 4 8 8-8 8z", "m12 4 8 8-8 8z"],
 };
 
 interface HeaderActionButtonProps

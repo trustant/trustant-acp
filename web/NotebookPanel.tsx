@@ -1,18 +1,21 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import type {
 	NotebookIndexEntry,
 	NotebookIndexResponse,
 	NotebookSessionState,
+	TemplateFrontMatter,
 } from "../src/types/notebook";
 
 interface NotebookPanelProps {
 	index: NotebookIndexResponse | null;
 	activeNotebook: NotebookSessionState | null;
+	/** Front matter of the workbench template.md, or null when none exists. */
+	localTemplate: TemplateFrontMatter | null;
 	busy: boolean;
 	onRefresh: () => void;
-	onLoad: (entry: NotebookIndexEntry) => void;
-	onSave: () => void;
-	onAdd: (name: string, path: string) => void;
+	onSelect: (entry: NotebookIndexEntry) => void;
+	onOpenLocal: () => void;
+	onSaveToGitHub: (name: string, file: string) => void;
 	onRemove: (entry: NotebookIndexEntry) => void;
 	onClose: () => void;
 }
@@ -23,31 +26,46 @@ function defaultPath(name: string): string {
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "");
-	return `${slug || "notebook"}.md`;
+	return `${slug || "template"}.md`;
 }
 
 export function NotebookPanel({
 	index,
 	activeNotebook,
+	localTemplate,
 	busy,
 	onRefresh,
-	onLoad,
-	onSave,
-	onAdd,
+	onSelect,
+	onOpenLocal,
+	onSaveToGitHub,
 	onRemove,
 	onClose,
 }: NotebookPanelProps): React.ReactElement {
-	const [newName, setNewName] = useState("");
-	const [newPath, setNewPath] = useState("");
+	// Editable identity of the working copy. Seeded from front matter and
+	// re-seeded whenever it changes, so a save-back or a fresh selection does
+	// not leave the previous template's name in the inputs.
+	const [saveName, setSaveName] = useState(localTemplate?.name ?? "");
+	const [saveFile, setSaveFile] = useState(localTemplate?.file ?? "");
+	useEffect(() => {
+		setSaveName(localTemplate?.name ?? "");
+		setSaveFile(localTemplate?.file ?? "");
+	}, [localTemplate?.name, localTemplate?.file, localTemplate?.edited]);
+
+	// A repository without a write token cannot be published to. The catalog
+	// still reads, and the working copy still saves locally, so only the
+	// upstream controls are withheld.
 	const hasToken = index?.hasToken ?? false;
+	const changed = localTemplate?.edited ?? false;
+	// An unnamed working copy has no upstream file yet; offer one from the name.
+	const effectiveFile = saveFile.trim() || defaultPath(saveName);
 
 	return (
-		<aside className="notebook-panel" aria-label="Notebook panel">
+		<aside className="notebook-panel" aria-label="Template panel">
 			<div className="notebook-panel-header">
 				<div>
-					<strong>Notebooks</strong>
+					<strong>Templates</strong>
 					<div className="notebook-panel-subtitle">
-						GitHub-backed prompt workflows
+						GitHub-backed prompt templates
 					</div>
 				</div>
 				<button className="icon-button" title="Close" onClick={onClose}>
@@ -73,95 +91,112 @@ export function NotebookPanel({
 				</button>
 			</div>
 
-			{index && !hasToken && (
-				<div className="notebook-warning">
-					Read-only. Configure notebook GitHub write access in Trustable
-					Configure to enable save, add, and remove.
+			{localTemplate && (
+				<div
+					className={`notebook-working-copy ${changed ? "changed" : ""}`}
+					aria-label="Working copy"
+				>
+					<div className="notebook-working-copy-header">
+						<div>
+							<strong>{localTemplate.name || "Unnamed template"}</strong>
+							<code>
+								{localTemplate.file
+									? `${localTemplate.repo || "local"} · ${localTemplate.file}`
+									: "not yet saved to a repository"}
+							</code>
+						</div>
+						{changed && (
+							<span className="notebook-changed-badge">Changed</span>
+						)}
+						<button
+							className="notebook-primary"
+							disabled={busy}
+							onClick={onOpenLocal}
+						>
+							Open
+						</button>
+					</div>
+
+					{changed && (
+						<div className="notebook-save-fields">
+							<input
+								aria-label="Template name"
+								value={saveName}
+								disabled={busy}
+								placeholder="Template name"
+								onChange={(event) => setSaveName(event.target.value)}
+							/>
+							<input
+								aria-label="Template file"
+								value={saveFile}
+								disabled={busy}
+								placeholder={defaultPath(saveName)}
+								onChange={(event) => setSaveFile(event.target.value)}
+							/>
+							{hasToken ? (
+								<button
+									disabled={busy || !saveName.trim()}
+									onClick={() =>
+										onSaveToGitHub(saveName.trim(), effectiveFile)
+									}
+								>
+									Save to GitHub
+								</button>
+							) : (
+								<div className="notebook-hint">
+									add in configuration your github token to edit templates
+								</div>
+							)}
+						</div>
+					)}
 				</div>
 			)}
 
-			<div className="notebook-list" aria-label="Available notebooks">
+			<div className="notebook-list" aria-label="Available templates">
 				{index?.entries.map((entry) => (
 					<div
 						className={`notebook-list-entry ${
-							activeNotebook?.path === entry.path ? "active" : ""
+							activeNotebook?.template.file === entry.path ? "active" : ""
 						}`}
 						key={entry.path}
 					>
 						<button
 							className="notebook-list-load"
 							disabled={busy}
-							onClick={() => onLoad(entry)}
+							onClick={() => onSelect(entry)}
 						>
 							<span>{entry.name}</span>
 							{entry.comment && <small>{entry.comment}</small>}
 						</button>
-						<button
-							className="icon-button danger"
-							title={`Remove ${entry.name}`}
-							disabled={busy || !hasToken}
-							onClick={() => onRemove(entry)}
-						>
-							×
-						</button>
+						{hasToken && (
+							<button
+								className="icon-button danger"
+								title={`Remove ${entry.name}`}
+								disabled={busy}
+								onClick={() => onRemove(entry)}
+							>
+								×
+							</button>
+						)}
 					</div>
 				))}
 				{index && index.entries.length === 0 && (
-					<div className="notebook-list-empty">No notebooks indexed.</div>
+					<div className="notebook-list-empty">No templates indexed.</div>
 				)}
 			</div>
 
-			{activeNotebook && (
-				<div className="notebook-active">
-					<div>
-						<strong>{activeNotebook.notebookName}</strong>
-						<code>{activeNotebook.path}</code>
-					</div>
-					<button
-						className="notebook-primary"
-						disabled={busy || !hasToken || !activeNotebook.dirty}
-						onClick={onSave}
-					>
-						Save
-					</button>
+			{/*
+			 * There is deliberately no add-template form: Save to GitHub already
+			 * creates and indexes a template that does not exist yet, so a second
+			 * creation path would only duplicate it. A new template starts by
+			 * pinning a chat message; an existing one is renamed in place.
+			 */}
+
+			{index && !hasToken && !changed && (
+				<div className="notebook-hint">
+					add in configuration your github token to edit templates
 				</div>
 			)}
-
-			<div className="notebook-add">
-				<strong>Add notebook</strong>
-				<input
-					aria-label="New notebook name"
-					value={newName}
-					disabled={!hasToken || busy}
-					placeholder="Notebook name"
-					onChange={(event) => {
-						const value = event.target.value;
-						setNewName(value);
-						if (!newPath || newPath === defaultPath(newName)) {
-							setNewPath(defaultPath(value));
-						}
-					}}
-				/>
-				<input
-					aria-label="New notebook path"
-					value={newPath}
-					disabled={!hasToken || busy}
-					placeholder="notebook-file.md"
-					onChange={(event) => setNewPath(event.target.value)}
-				/>
-				<button
-					disabled={
-						!hasToken || busy || !newName.trim() || !newPath.trim()
-					}
-					onClick={() => {
-						onAdd(newName.trim(), newPath.trim());
-						setNewName("");
-						setNewPath("");
-					}}
-				>
-					Add
-				</button>
-			</div>
 		</aside>
 	);
 }

@@ -36,6 +36,13 @@ function state(): NotebookSessionState {
 		],
 		selectedNodeId: "node",
 		dirty: false,
+		template: {
+			name: "Notebook",
+			repo: "trustable-ai/templates",
+			file: "one.md",
+			edited: false,
+			extra: {},
+		},
 	};
 }
 

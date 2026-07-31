@@ -23,7 +23,15 @@ import type {
 	NotebookIndexResponse,
 	NotebookMutationResponse,
 	NotebookSessionState,
+	TemplateFrontMatter,
 } from "../src/types/notebook";
+
+/** The workbench working copy as returned by the local/select routes. */
+interface LocalTemplateResponse {
+	exists: boolean;
+	frontMatter: TemplateFrontMatter;
+	prompts: string[];
+}
 import type { ShellExecutionResult } from "../server/shell-executor";
 
 export interface AgentInfo {
@@ -287,33 +295,24 @@ export class AcpTransport {
 		});
 	}
 
-	async saveNotebook(
-		state: NotebookSessionState,
-		prompts: string[],
-	): Promise<{ sha: string; hasToken: boolean }> {
-		return this.call("PUT /api/notebooks/save", {
-			repository: state.source.repository,
-			ref: state.source.ref,
-			path: state.path,
-			sha: state.fileSha,
-			prompts,
+	/** Copy a catalog entry into the workbench as the working copy. */
+	async selectNotebook(
+		index: NotebookIndexResponse,
+		entry: NotebookIndexEntry,
+		force = false,
+	): Promise<LocalTemplateResponse> {
+		return this.call("/api/notebooks/select", {
+			repository: index.source.repository,
+			ref: index.source.ref,
+			name: entry.name,
+			path: entry.path,
+			readmeSha: index.readmeSha,
+			force,
 		});
 	}
 
-	async addNotebook(
-		index: NotebookIndexResponse,
-		name: string,
-		path: string,
-	): Promise<NotebookMutationResponse> {
-		return this.call("/api/notebooks/add", {
-			repository: index.source.repository,
-			ref: index.source.ref,
-			readmeSha: index.readmeSha,
-			name,
-			path,
-			prompts: ["New prompt"],
-		});
-	}
+	// There is no addNotebook: saveTemplate creates and indexes a template that
+	// does not exist yet, so creation has exactly one path.
 
 	async removeNotebook(
 		index: NotebookIndexResponse,
@@ -325,6 +324,33 @@ export class AcpTransport {
 			readmeSha: index.readmeSha,
 			path: entry.path,
 		});
+	}
+
+	// ---- the workbench working copy ---------------------------------------
+
+	async loadLocalTemplate(): Promise<LocalTemplateResponse> {
+		return this.call("/api/notebooks/local", {});
+	}
+
+	async saveLocalTemplate(
+		frontMatter: TemplateFrontMatter,
+		prompts: string[],
+	): Promise<{ path: string; staged: boolean }> {
+		return this.call("PUT /api/notebooks/save-local", {
+			frontMatter,
+			prompts,
+		});
+	}
+
+	/** Save the working copy upstream; prompts are read server-side. */
+	async saveTemplate(
+		name: string,
+		file: string,
+	): Promise<{
+		index: NotebookIndexResponse;
+		frontMatter: TemplateFrontMatter;
+	}> {
+		return this.call("PUT /api/notebooks/save-template", { name, file });
 	}
 
 	// ---- per-agent config + auth (endpoint/login popups) ------------------

@@ -144,22 +144,52 @@ export interface NotebookLoadRequest extends NotebookSourceRequest {
 	path: string;
 	readmeSha: string;
 }
-export interface NotebookSaveRequest extends NotebookSourceRequest {
-	path: string;
-	sha: string;
-	prompts: string[];
-}
-export interface NotebookAddRequest extends NotebookSourceRequest {
-	readmeSha: string;
-	name: string;
-	path: string;
-	comment?: string;
-	prompts?: string[];
-}
 export interface NotebookRemoveRequest extends NotebookSourceRequest {
 	readmeSha: string;
 	path: string;
 }
+/**
+ * The workbench working copy. The file name is fixed server-side, so requests
+ * carry provenance and prompts only, never a path.
+ */
+export interface TemplateFrontMatterWire {
+	name: string;
+	repo: string;
+	file: string;
+	edited: boolean;
+	extra?: Record<string, string>;
+}
+export interface NotebookSaveLocalRequest {
+	frontMatter: TemplateFrontMatterWire;
+	prompts: string[];
+}
+export interface NotebookLocalResponse {
+	exists: boolean;
+	frontMatter: TemplateFrontMatterWire;
+	prompts: string[];
+}
+export interface NotebookSaveLocalResponse {
+	path: string;
+	staged: boolean;
+}
+/** Copy a catalog entry into the workbench, replacing any working copy. */
+export interface NotebookSelectRequest extends NotebookLoadRequest {
+	/** Required to replace a working copy that has unsaved edits. */
+	force?: boolean;
+}
+/**
+ * Save the working copy upstream. Prompts are read from `template.md`
+ * server-side, so they are absent here by design.
+ */
+export interface NotebookSaveTemplateRequest {
+	name: string;
+	file: string;
+}
+export interface NotebookSaveTemplateResponse {
+	index: NotebookIndexResponse;
+	frontMatter: TemplateFrontMatterWire;
+}
+
 export interface NotebookSessionRequest {
 	sessionId: string;
 }
