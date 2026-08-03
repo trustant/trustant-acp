@@ -3,6 +3,7 @@ import {
 	addNotebookIndexEntry,
 	advanceNotebookSelection,
 	insertAdHocNode,
+	moveNotebookNode,
 	normalizeNotebookSessionState,
 	notebookPromptSummary,
 	notebookPromptsForSave,
@@ -209,6 +210,41 @@ describe("notebook workflow", () => {
 			"a",
 			"input",
 		]);
+	});
+
+	it("moves a step up and down", () => {
+		const nodes = [node("a"), node("b"), node("c")];
+		expect(moveNotebookNode(nodes, "b", -1).map((item) => item.id)).toEqual([
+			"b",
+			"a",
+			"c",
+		]);
+		expect(moveNotebookNode(nodes, "b", 1).map((item) => item.id)).toEqual([
+			"a",
+			"c",
+			"b",
+		]);
+	});
+
+	it("leaves the order unchanged at either boundary", () => {
+		const nodes = [node("a"), node("b")];
+		expect(moveNotebookNode(nodes, "a", -1)).toBe(nodes);
+		expect(moveNotebookNode(nodes, "b", 1)).toBe(nodes);
+	});
+
+	// Only notebook nodes reach template.md, so a move has to swap against the
+	// nearest step: hopping just the input would reorder the view but not the file.
+	it("steps over an ad-hoc input so view and saved order agree", () => {
+		const nodes = [node("a"), node("input", "input"), node("b")];
+		const moved = moveNotebookNode(nodes, "b", -1);
+		expect(moved.map((item) => item.id)).toEqual(["b", "input", "a"]);
+		expect(notebookPromptsForSave(moved)).toEqual(["b", "a"]);
+	});
+
+	it("refuses to move an ad-hoc input or an unknown node", () => {
+		const nodes = [node("a"), node("input", "input"), node("b")];
+		expect(moveNotebookNode(nodes, "input", -1)).toBe(nodes);
+		expect(moveNotebookNode(nodes, "missing", 1)).toBe(nodes);
 	});
 
 	it("keeps selection valid when a selected node is removed", () => {

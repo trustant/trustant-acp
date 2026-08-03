@@ -46,6 +46,7 @@ import {
 	advanceNotebookSelection,
 	EMPTY_TEMPLATE_FRONT_MATTER,
 	insertAdHocNode,
+	moveNotebookNode,
 	notebookPromptsForSave,
 	pinNotebookNode,
 	removeNotebookNode,
@@ -222,6 +223,12 @@ export function ChatApp(): React.ReactElement {
 	const [editingNotebookNode, setEditingNotebookNode] = useState<string | null>(
 		null,
 	);
+	const [movingNotebookNode, setMovingNotebookNode] = useState<string | null>(
+		null,
+	);
+	// The node order captured when a move started, restored by Esc. A ref, not
+	// state: it is never rendered, and re-rendering on capture would be wasted.
+	const moveOriginRef = useRef<NotebookNode[] | null>(null);
 	// The workbench working copy (template.md), or null when none exists.
 	const [localTemplate, setLocalTemplate] = useState<LocalTemplate | null>(
 		null,
@@ -727,6 +734,7 @@ export function ChatApp(): React.ReactElement {
 			setTurns([]);
 			setNotebook(null);
 			setEditingNotebookNode(null);
+			setMovingNotebookNode(null);
 			sessionRef.current = null;
 			setReady(false);
 			setConfigOptions([]);
@@ -1088,6 +1096,7 @@ export function ChatApp(): React.ReactElement {
 			// template of the session being replaced.
 			runAllRef.current = false;
 			setEditingNotebookNode(null);
+			setMovingNotebookNode(null);
 			setTurns([]);
 			setPermission(null);
 			setConfigOptions(configured);
@@ -1322,6 +1331,7 @@ export function ChatApp(): React.ReactElement {
 					prompts: local.prompts,
 				});
 				setEditingNotebookNode(null);
+				setMovingNotebookNode(null);
 			} catch (e) {
 				setError(String((e as Error).message ?? e));
 			} finally {
@@ -1455,6 +1465,7 @@ export function ChatApp(): React.ReactElement {
 			template: localTemplate.frontMatter,
 		});
 		setEditingNotebookNode(null);
+		setMovingNotebookNode(null);
 	}, [localTemplate, notebookIndex]);
 
 	const removeRemoteNotebook = useCallback(
@@ -1559,6 +1570,67 @@ export function ChatApp(): React.ReactElement {
 			);
 			setEditingNotebookNode(null);
 			void persistWorkingCopy(nodes);
+		},
+		[persistWorkingCopy],
+	);
+
+	/**
+	 * Enter move mode, capturing the order Esc will restore.
+	 *
+	 * Move and edit are both modal on a single node, so starting one ends the
+	 * other rather than leaving a node in two modes at once.
+	 */
+	const startMoveNotebookNode = useCallback((nodeId: string) => {
+		const state = notebookRef.current;
+		if (!state) return;
+		moveOriginRef.current = state.nodes;
+		setNotebook((current) =>
+			current ? { ...current, selectedNodeId: nodeId } : current,
+		);
+		setEditingNotebookNode(null);
+		setMovingNotebookNode(nodeId);
+	}, []);
+
+	/**
+	 * Drive a move from the keyboard.
+	 *
+	 * WHY arrows do not persist: an in-flight move is not yet a decision, so
+	 * only Enter writes `template.md`. Esc restores the captured order and
+	 * writes nothing, which is what makes it a cancel rather than a second
+	 * edit. The session sidecar still follows `notebook` as it changes — that
+	 * is session state, and a restore travels through the same state object.
+	 */
+	const handleMoveKey = useCallback(
+		(nodeId: string, key: string) => {
+			const state = notebookRef.current;
+			if (!state) return;
+			if (key === "ArrowUp" || key === "ArrowDown") {
+				const nodes = moveNotebookNode(
+					state.nodes,
+					nodeId,
+					key === "ArrowUp" ? -1 : 1,
+				);
+				setNotebook((current) => (current ? { ...current, nodes } : current));
+				return;
+			}
+			if (key === "Enter") {
+				setMovingNotebookNode(null);
+				moveOriginRef.current = null;
+				setNotebook((current) =>
+					current ? { ...current, dirty: true } : current,
+				);
+				void persistWorkingCopy(state.nodes);
+				return;
+			}
+			if (key === "Escape") {
+				const origin = moveOriginRef.current;
+				setMovingNotebookNode(null);
+				moveOriginRef.current = null;
+				if (origin)
+					setNotebook((current) =>
+						current ? { ...current, nodes: origin } : current,
+					);
+			}
 		},
 		[persistWorkingCopy],
 	);
@@ -2309,6 +2381,7 @@ export function ChatApp(): React.ReactElement {
 						selected={notebook.selectedNodeId === node.id}
 						editing={editingNotebookNode === node.id}
 						running={runningNotebookNode === node.id}
+						moving={movingNotebookNode === node.id}
 						busy={busy || notebookBusy}
 						onSelect={() =>
 							setNotebook((state) =>
@@ -2327,6 +2400,8 @@ export function ChatApp(): React.ReactElement {
 						onCancelEdit={cancelEditNotebookNode}
 						onRemove={() => removeNode(node)}
 						onPin={() => pinNode(node.id)}
+						onMove={() => startMoveNotebookNode(node.id)}
+						onMoveKey={(key) => handleMoveKey(node.id, key)}
 					/>
 				))}
 				{permission && (

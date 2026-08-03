@@ -15,6 +15,8 @@ interface NotebookNodeViewProps {
 	editing: boolean;
 	/** True while this node's prompt is in flight. */
 	running: boolean;
+	/** True while this node is being repositioned by the keyboard. */
+	moving: boolean;
 	busy: boolean;
 	onSelect: () => void;
 	onRun: () => void;
@@ -23,6 +25,9 @@ interface NotebookNodeViewProps {
 	onCancelEdit: () => void;
 	onRemove: () => void;
 	onPin: () => void;
+	onMove: () => void;
+	/** Receives only the four keys move mode acts on. */
+	onMoveKey: (key: string) => void;
 }
 
 export function NotebookNodeView({
@@ -30,6 +35,7 @@ export function NotebookNodeView({
 	selected,
 	editing,
 	running,
+	moving,
 	busy,
 	onSelect,
 	onRun,
@@ -38,6 +44,8 @@ export function NotebookNodeView({
 	onCancelEdit,
 	onRemove,
 	onPin,
+	onMove,
+	onMoveKey,
 }: NotebookNodeViewProps): React.ReactElement {
 	// WHY: the draft lives in the node being edited rather than in the shared
 	// composer, so editing one step never competes with ad-hoc input and Cancel
@@ -59,6 +67,14 @@ export function NotebookNodeView({
 	);
 	const latestTool = toolOutputs[toolOutputs.length - 1];
 	const activityRef = useRef<HTMLDivElement>(null);
+	const sectionRef = useRef<HTMLElement>(null);
+
+	// Move mode is keyboard-driven, so the node itself has to hold focus for the
+	// arrows to reach it: without this the keystrokes go to the page and scroll
+	// the conversation instead of reordering the step.
+	useEffect(() => {
+		if (moving) sectionRef.current?.focus();
+	}, [moving]);
 
 	useEffect(() => {
 		const activity = activityRef.current;
@@ -74,11 +90,35 @@ export function NotebookNodeView({
 
 	return (
 		<section
+			ref={sectionRef}
 			className={`notebook-node ${node.kind} ${
 				selected ? "selected" : ""
-			} ${editing ? "editing" : ""} run-${runState}`}
+			} ${editing ? "editing" : ""} ${
+				moving ? "moving" : ""
+			} run-${runState}`}
 			data-node-kind={node.kind}
 			data-run-state={runState}
+			data-moving={moving ? "true" : undefined}
+			// Focusable only while moving: the node is not a tab stop in the
+			// ordinary reading flow, it just needs to receive the arrows.
+			tabIndex={moving ? -1 : undefined}
+			onKeyDown={
+				moving
+					? (event) => {
+							if (
+								event.key !== "ArrowUp" &&
+								event.key !== "ArrowDown" &&
+								event.key !== "Enter" &&
+								event.key !== "Escape"
+							)
+								return;
+							// Arrows would otherwise scroll the conversation out from
+							// under the node the user is positioning.
+							event.preventDefault();
+							onMoveKey(event.key);
+						}
+					: undefined
+			}
 		>
 			<div className="notebook-node-header">
 				{node.kind === "notebook" ? (
@@ -108,7 +148,13 @@ export function NotebookNodeView({
 					{running ? "Running…" : hasRun ? "Run" : "Not run"}
 				</span>
 				<div className="notebook-node-actions">
-					{node.kind === "input" ? (
+					{moving ? (
+						// The hint replaces the controls, as Save/Cancel do for an edit:
+						// while moving, the keyboard is the only way to act on the node.
+						<span className="notebook-move-hint" aria-live="polite">
+							use arrow to move, enter to confirm esc to cancel
+						</span>
+					) : node.kind === "input" ? (
 						// An ad-hoc node only exists while a template is loaded,
 						// so this is always adding to one, never creating one.
 						<button title="Add to template" disabled={busy} onClick={onPin}>
@@ -135,9 +181,20 @@ export function NotebookNodeView({
 							<button title="Edit prompt in place" disabled={busy} onClick={onEdit}>
 								Edit
 							</button>
+							{/* Only steps are written to the template, so only steps
+							    can be reordered. */}
+							{node.kind === "notebook" && (
+								<button
+									title="Move step with the arrow keys"
+									disabled={busy}
+									onClick={onMove}
+								>
+									Move
+								</button>
+							)}
 						</>
 					)}
-					{!editing && (
+					{!editing && !moving && (
 						<button title="Remove step" disabled={busy} onClick={onRemove}>
 							Remove
 						</button>
