@@ -290,6 +290,36 @@ export function pinNotebookNode(
 	);
 }
 
+/**
+ * Swap a notebook step with the nearest step in `direction`.
+ *
+ * WHY the nearest *step* rather than the adjacent node: only notebook nodes are
+ * written to `template.md`, so a move that merely hopped an ad-hoc input would
+ * change the visible order while leaving the saved prompt order untouched —
+ * reading as a move that did nothing. Stepping over inputs keeps the two orders
+ * in agreement, which is what makes the confirmed write meaningful.
+ *
+ * Returns the array unchanged when the node is absent, is not a notebook node,
+ * or already sits at the end it is moving toward, so the caller does not have
+ * to special-case the boundary.
+ */
+export function moveNotebookNode(
+	nodes: NotebookNode[],
+	nodeId: string,
+	direction: -1 | 1,
+): NotebookNode[] {
+	const from = nodes.findIndex((node) => node.id === nodeId);
+	if (from < 0 || nodes[from].kind !== "notebook") return nodes;
+	for (let to = from + direction; to >= 0 && to < nodes.length; to += direction) {
+		if (nodes[to].kind !== "notebook") continue;
+		const next = [...nodes];
+		next[from] = nodes[to];
+		next[to] = nodes[from];
+		return next;
+	}
+	return nodes;
+}
+
 export function removeNotebookNode(
 	nodes: NotebookNode[],
 	nodeId: string,

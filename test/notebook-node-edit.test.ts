@@ -16,6 +16,7 @@ function view(
 	editing: boolean,
 	overrides: Partial<NotebookNode> = {},
 	running = false,
+	extra: { moving?: boolean; busy?: boolean } = {},
 ): string {
 	return renderToStaticMarkup(
 		React.createElement(NotebookNodeView, {
@@ -23,7 +24,8 @@ function view(
 			selected: true,
 			editing,
 			running,
-			busy: false,
+			moving: extra.moving ?? false,
+			busy: extra.busy ?? false,
 			onSelect: () => {},
 			onRun: () => {},
 			onEdit: () => {},
@@ -31,6 +33,8 @@ function view(
 			onCancelEdit: () => {},
 			onRemove: () => {},
 			onPin: () => {},
+			onMove: () => {},
+			onMoveKey: () => {},
 		}),
 	);
 }
@@ -173,5 +177,42 @@ describe("working copy session state", () => {
 		expect(
 			normalizeNotebookSessionState(state({ local: true })),
 		).not.toHaveProperty("local");
+	});
+});
+
+describe("step move mode", () => {
+	it("offers Move on a step", () => {
+		expect(view(false)).toContain(">Move</button>");
+	});
+
+	// An ad-hoc input is not written to the template, so there is nothing to
+	// reorder and the control would only promise something it cannot deliver.
+	it("does not offer Move on an ad-hoc input", () => {
+		expect(view(false, { kind: "input" })).not.toContain(">Move</button>");
+	});
+
+	it("replaces the controls with the hint while moving", () => {
+		const html = view(false, {}, false, { moving: true });
+		expect(html).toContain("use arrow to move, enter to confirm esc to cancel");
+		expect(html).not.toContain(">Move</button>");
+		expect(html).not.toContain(">Run</button>");
+		expect(html).not.toContain(">Remove</button>");
+	});
+
+	it("marks the moving node and makes it focusable for the arrows", () => {
+		const html = view(false, {}, false, { moving: true });
+		expect(html).toContain('data-moving="true"');
+		expect(html).toContain("moving");
+		expect(html).toContain('tabindex="-1"');
+	});
+
+	it("keeps Move out of an edit, where Save and Cancel own the controls", () => {
+		expect(view(true)).not.toContain(">Move</button>");
+	});
+
+	it("disables Move during a run, as with the other step controls", () => {
+		expect(view(false, {}, false, { busy: true })).toContain(
+			'disabled=""',
+		);
 	});
 });

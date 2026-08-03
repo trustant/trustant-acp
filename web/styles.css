@@ -821,6 +821,24 @@ body {
 .notebook-node.editing {
 	border-style: dashed;
 }
+/*
+ * A node being repositioned reads as lifted out of the list: a dashed outline
+ * and a slight raise, on the outline channel rather than the left edge, so it
+ * does not compete with the run-state edge the step keeps while it moves.
+ */
+.notebook-node.moving {
+	outline: 2px dashed var(--notebook);
+	outline-offset: 2px;
+	box-shadow: 0 4px 12px color-mix(in srgb, var(--notebook) 20%, transparent);
+}
+.notebook-node.moving:focus {
+	outline-color: var(--notebook);
+}
+/* Plain instruction text: nothing is wrong, the node is simply in a mode. */
+.notebook-move-hint {
+	color: var(--muted);
+	font-size: 0.72rem;
+}
 
 /*
  * Run state on the left edge, which already carries node identity: a pending
