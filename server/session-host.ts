@@ -99,9 +99,9 @@ export class SessionHost {
 			agentConfig.redactionSecrets ?? [],
 		);
 
-		// WHY: Browser MCP owns stateful page/context resources. Keeping an
+		// WHY: managed MCP servers own stateful per-agent resources. Keeping an
 		// initialized client for a previously selected agent would leave a
-		// competing browser owner alive after an agent switch.
+		// competing owner of those resources alive after an agent switch.
 		await Promise.all(
 			[...this.clients.entries()]
 				.filter(([id]) => id !== agentId)

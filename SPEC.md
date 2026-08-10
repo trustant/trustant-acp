@@ -309,9 +309,7 @@ For Codex and Claude, `session/new`, `session/load`, `session/resume`, and
 `trustable-mcp-launch` host launcher.
 
 Only one agent process remains initialized. Selecting another agent disconnects
-the previous process tree first, which also closes its persistent Browser MCP.
-The Browser server serializes requests, preserves one page/context, rejects
-empty or stale captures, and performs deterministic signal cleanup.
+the previous process tree first, which also closes its persistent MCP servers.
 
 TruACP removes host config paths and service credential variables from the
 general Codex/Claude process environment. MCP values are injected only into the
@@ -605,7 +603,7 @@ exact credential-free `.mcp.json`, private `mcpConfig`, local development URL,
 browser-visible application URL, private watcher log, and the extension selected by
 `TRUSTABLE_PI_EXTENSION_PATH`, then includes
 only that validated path in `piLaunch.extensions.paths`. The manifest uses the
-version-2 `workbenches` envelope shared with Browser MCP. Managed mode fails
+version-2 `workbenches` envelope. Managed mode fails
 closed if the contract is absent, malformed, stale, or does not cover the
 requested session cwd.
 Standalone TruACP retains normal Pi discovery without requiring this manifest.
@@ -629,7 +627,7 @@ values. The corrected OpenServerless `auth_setup` remains available because it
 atomically adds Redis wiring to the complete token/protected/logout endpoint
 set without reading or writing `.env`. The host prompt requires Redis-backed
 opaque sessions for generated application authentication and deterministic
-`react_validate` after frontend mutations before Browser MCP calls.
+`react_validate` after frontend mutations.
 
 The extension rejects direct writes to generated `packages/**/__main__.py`
 wrappers and `packages/**/*.zip` deploy artifacts. It also rejects mutating

@@ -84,7 +84,6 @@ describe("Trustable Pi runtime extension", () => {
 			JSON.stringify({
 				mcpServers: {
 					openserverless: {},
-					browser: {},
 					mongodb: {},
 				},
 			}),
@@ -96,10 +95,6 @@ describe("Trustable Pi runtime extension", () => {
 					openserverless: {
 						type: "stdio",
 						command: "openserverless-mcp",
-					},
-					browser: {
-						type: "stdio",
-						command: "trustable-browser-mcp",
 					},
 					mongodb: {
 						type: "stdio",
@@ -119,11 +114,7 @@ describe("Trustable Pi runtime extension", () => {
 						workspace: workbench,
 						developmentUrl: "http://localhost:5173",
 						browserUrl: "http://vite.example.test",
-						requiredMcpServers: [
-							"mongodb",
-							"browser",
-							"openserverless",
-						],
+						requiredMcpServers: ["mongodb", "openserverless"],
 						mcpConfig,
 						watcherLog,
 					},
@@ -135,11 +126,7 @@ describe("Trustable Pi runtime extension", () => {
 			TRUSTABLE_MANAGED_RUNTIME: "1",
 			TRUSTABLE_RUNTIME_CONFIG: manifestPath,
 		});
-		expect(manifest.requiredMcpServers).toEqual([
-			"browser",
-			"mongodb",
-			"openserverless",
-		]);
+		expect(manifest.requiredMcpServers).toEqual(["mongodb", "openserverless"]);
 		expect(pathIsWithin(workbench, nested)).toBe(true);
 		expect(pathIsWithin(workbench, join(root, "other"))).toBe(false);
 		expect(trustableRuntimeSystemPrompt(manifest)).toContain(

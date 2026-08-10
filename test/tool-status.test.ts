@@ -49,7 +49,7 @@ describe("tool status presentation", () => {
 	it("shows an active unresolved failure as an intermediate attempt", () => {
 		expect(
 			toolStatusPresentation(
-				{ title: "browser_browser_open", status: "failed" },
+				{ title: "openserverless_action_list", status: "failed" },
 				[],
 				true,
 			),
@@ -62,7 +62,7 @@ describe("tool status presentation", () => {
 	it("keeps an idle unresolved failure red", () => {
 		expect(
 			toolStatusPresentation(
-				{ title: "browser_browser_open", status: "failed" },
+				{ title: "openserverless_action_list", status: "failed" },
 				[{ title: "mcp", status: "completed" }],
 				false,
 			),
