@@ -513,12 +513,12 @@ export function trustableRuntimeSystemPrompt(
 		"  MCP discovery is host-managed and credential-free. Never read the private MCP config, inspect managed-process environments, or start MCP server commands manually.",
 		"  Before application work, complete the mandatory MCP bootstrap with either sequence: (a) call mcp({}) once, then mcp({server:\"<name>\"}) for every required server listed above; or (b) call mcp({connect:\"<name>\"}) for every required server. A successful connect is stronger evidence and satisfies both proxy reachability and that server's tool discovery. Use the exact tool names and schemas returned by those calls. Do not infer tool availability from memory or repository prose.",
 		"  Treat service MCPs as discovery and read-only verification interfaces. Application schemas, seed data, and writes belong in reproducible setup/actions created through the OpenServerless MCP, never in direct service-MCP repair calls.",
-		"  Run the deterministic React MCP react_validate after frontend mutations and before Browser MCP verification. Agentic React is optional selection context, not source validation.",
+		"  Run the deterministic React MCP react_validate after frontend mutations. Agentic React is optional selection context, not source validation.",
 		"  The existing ops ide devel watcher is the sole owner of live action deployment. Never run ops ide deploy or start another ops ide devel process.",
-		"  After one or more successful action_new creations, finish the coherent action/wiring/source batch and call trustable_runtime_redeploy exactly once before watcher status, the action checker, HTTP checks, or browser verification. This invokes the same safe redeploy workflow as the Trustable UI without racing the watcher.",
+		"  After one or more successful action_new creations, finish the coherent action/wiring/source batch and call trustable_runtime_redeploy exactly once before watcher status, the action checker, or HTTP checks. This invokes the same safe redeploy workflow as the Trustable UI without racing the watcher.",
 		"  After redeploy, call trustable_runtime_status to read the managed watcher evidence, then run the action checker once and perform real HTTP checks. In managed live mode the checker validates source contracts without using sibling ZIP freshness.",
 		"  Never inspect, search, stat, or poll packages/**/*.zip. Do not infer watcher state from archive paths, process searches, repeated checker calls, or longer timeouts.",
-		"  Use the local development URL through the Browser MCP and the browser-visible URL only for external verification; do not infer another host.",
+		"  Use the local development URL for verification and the browser-visible URL only for external verification; do not infer another host.",
 		"  Application .env and .env.production files are immutable agent boundaries. Never read, create, edit, import, synchronize, or regenerate them. Only the user may change application environment values through the Trustable configuration interface; report a missing value without attempting to create it.",
 		"  For authenticated application pages, create all endpoints first and call the OpenServerless auth_setup tool once with the complete token, protected/session, and logout endpoint sets. It atomically adds Redis wiring; use opaque random session tokens with an expiry, build every key from ctx.REDIS_PREFIX, validate the Redis session on every protected request, and delete it on logout. Never use JWT or an application secret as the session foundation.",
 		"  Never create or edit generated packages/<package>/<action>/__main__.py wrappers or packages/**/*.zip artifacts. Use the exposed OpenServerless action and connector tools; never invent commands such as ops ide action invoke.",
@@ -608,7 +608,7 @@ export function managedSecretAccessBlockReason(
 	if (
 		(toolName === "bash" || toolName === "shell") &&
 		typeof input.command === "string" &&
-		/(?:^|[;&|]\s*|\b(?:exec|env|timeout|command)\s+)(?:trustable-mcp-launch|trustable-browser-mcp|trustable-react-mcp|openserverless-mcp|postgres-mcp|redis-mcp-server|mcp-server-milvus|mongodb-mcp-server|mcp-s3)\b/m.test(
+		/(?:^|[;&|]\s*|\b(?:exec|env|timeout|command)\s+)(?:trustable-mcp-launch|trustable-react-mcp|openserverless-mcp|postgres-mcp|redis-mcp-server|mcp-server-milvus|mongodb-mcp-server|mcp-s3)\b/m.test(
 			input.command,
 		)
 	) {
@@ -1450,17 +1450,6 @@ export default function trustableRuntimeExtension(
 		const authBlockReason = authRedisBindingBlockReason(invocation);
 		if (authBlockReason) {
 			return { block: true, reason: authBlockReason };
-		}
-		if (
-			reactValidationRequired &&
-			invocation?.mode === "call" &&
-			invocation.server === "browser"
-		) {
-			return {
-				block: true,
-				reason:
-					"Trustable requires one deterministic react_validate call after the latest frontend mutation and before Browser MCP verification.",
-			};
 		}
 		const shellBlockReason = managedShellCommandBlockReason(
 			event.toolName,

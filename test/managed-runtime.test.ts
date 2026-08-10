@@ -181,8 +181,8 @@ describe("Trustable managed Pi runtime", () => {
 	it("passes managed MCP servers to Codex and Claude but keeps Pi on its proxy", () => {
 		const servers = [
 			{
-				name: "browser",
-				command: "trustable-browser-mcp",
+				name: "react",
+				command: "trustable-react-mcp",
 				args: [],
 				env: [],
 			},
