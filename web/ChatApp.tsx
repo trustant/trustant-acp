@@ -42,6 +42,7 @@ import type {
 	NotebookSessionState,
 	TemplateFrontMatter,
 } from "../src/types/notebook";
+import type { NotebookRunResult } from "../src/services/notebook";
 import {
 	advanceNotebookSelection,
 	EMPTY_TEMPLATE_FRONT_MATTER,
@@ -50,6 +51,7 @@ import {
 	notebookPromptsForSave,
 	pinNotebookNode,
 	removeNotebookNode,
+	shouldContinueRunAll,
 } from "../src/services/notebook";
 
 /** The workbench working copy as the local/select routes return it. */
@@ -234,8 +236,17 @@ export function ChatApp(): React.ReactElement {
 		null,
 	);
 	// Set while "Run all" walks the remaining steps; cleared to stop the walk
-	// after the current step when a run fails or the user starts a new session.
+	// after the current step when a run fails, the user stops, or the user
+	// starts a new session.
 	const runAllRef = useRef(false);
+	// Mirrors runAllRef for rendering. The ref is what the loop reads between
+	// awaits; this state is what makes the Stop button appear, since a ref
+	// change does not re-render. Keep the two assigned together.
+	const [runAllActive, setRunAllActive] = useState(false);
+	// Set by stop() so the in-flight step knows its turn was cancelled rather
+	// than completed: a cancelled ACP turn resolves successfully, so the send
+	// path alone cannot tell the difference. Cleared when a step starts.
+	const cancelRequestedRef = useRef(false);
 	// True while a step's prompt is in flight. Guards re-entry within a single
 	// render, which the `busy` state cannot do during a sequential run-all.
 	const notebookRunningRef = useRef(false);
@@ -847,9 +858,9 @@ export function ChatApp(): React.ReactElement {
 			nodeId: string,
 			prompt: string,
 			advance: boolean,
-		): Promise<boolean> => {
+		): Promise<NotebookRunResult> => {
 			const sessionId = sessionRef.current;
-			if (!sessionId || notebookRunningRef.current) return true;
+			if (!sessionId || notebookRunningRef.current) return "failed";
 			notebookRunningRef.current = true;
 			const outputId = nextId("notebook-output");
 			activeNotebookNodeRef.current = nodeId;
@@ -880,10 +891,22 @@ export function ChatApp(): React.ReactElement {
 			);
 			setBusy(true);
 			setError(null);
+			// A stop from a previous step must not be read as cancelling this
+			// one.
+			cancelRequestedRef.current = false;
 			try {
 				await transport.sendPrompt(sessionId, [
 					{ type: "text", text: prompt },
 				]);
+				// A cancelled turn resolves normally — pi-acp returns
+				// {stopReason:'cancelled'} as a successful result and the client
+				// swallows abort errors — so the only reliable signal that this
+				// turn was stopped is the intent stop() recorded.
+				if (cancelRequestedRef.current) {
+					// Leave the selection where it is, so Run all resumes from
+					// the stopped step.
+					return "cancelled";
+				}
 				if (advance) {
 					setNotebook((state) =>
 						state
@@ -897,10 +920,13 @@ export function ChatApp(): React.ReactElement {
 							: state,
 					);
 				}
-				return false;
+				return "ok";
 			} catch (e) {
+				// A stop can also surface as a rejection depending on where the
+				// turn was aborted; that is still a cancel, not a failure.
+				if (cancelRequestedRef.current) return "cancelled";
 				setError(String((e as Error).message ?? e));
-				return true;
+				return "failed";
 			} finally {
 				activeNotebookNodeRef.current = null;
 				activeNotebookOutputRef.current = null;
@@ -1063,7 +1089,17 @@ export function ChatApp(): React.ReactElement {
 
 	const stop = useCallback(async () => {
 		const sessionId = sessionRef.current;
-		if (!sessionId || !running || stopping) return;
+		// A run-all counts as in flight even when no turn is: `running` is false
+		// in the gap between two steps, and Stop must work there too.
+		if (!sessionId || (!running && !runAllRef.current) || stopping) return;
+
+		// Clear the loop flag BEFORE awaiting the cancel: the loop checks it as
+		// soon as the current step settles, so clearing it late would let the
+		// next step's prompt fire.
+		runAllRef.current = false;
+		setRunAllActive(false);
+		cancelRequestedRef.current = true;
+
 		setStopping(true);
 		setActivity({
 			state: "stopping",
@@ -1072,7 +1108,17 @@ export function ChatApp(): React.ReactElement {
 			timestamp: new Date().toISOString(),
 		});
 		try {
-			await transport.cancel(sessionId);
+			// Only cancel when a turn is actually in flight. Stopping in the
+			// between-steps gap has nothing to cancel, and calling anyway would
+			// surface a spurious "Stop failed".
+			if (running) {
+				await transport.cancel(sessionId);
+			} else {
+				// No turn to cancel, so no activity event will arrive to clear
+				// the stopping state.
+				setStopping(false);
+				setActivity(null);
+			}
 		} catch (e) {
 			setStopping(false);
 			setError(`Stop failed: ${String((e as Error).message ?? e)}`);
@@ -1095,6 +1141,7 @@ export function ChatApp(): React.ReactElement {
 			// Stop an in-flight run-all: its remaining steps belong to the
 			// template of the session being replaced.
 			runAllRef.current = false;
+			setRunAllActive(false);
 			setEditingNotebookNode(null);
 			setMovingNotebookNode(null);
 			setTurns([]);
@@ -1519,6 +1566,7 @@ export function ChatApp(): React.ReactElement {
 			: 0;
 		if (startIndex < 0) return;
 		runAllRef.current = true;
+		setRunAllActive(true);
 		try {
 			for (const step of steps.slice(startIndex)) {
 				if (!runAllRef.current) break;
@@ -1528,15 +1576,18 @@ export function ChatApp(): React.ReactElement {
 					(node) => node.id === step.id,
 				);
 				if (!current) continue;
-				const failed = await executeNotebookNode(
+				const result = await executeNotebookNode(
 					current.id,
 					current.prompt,
 					true,
 				);
-				if (failed) break;
+				// The result covers a stop during the step; runAllRef covers one
+				// that landed in the gap between two steps.
+				if (!shouldContinueRunAll(result, runAllRef.current)) break;
 			}
 		} finally {
 			runAllRef.current = false;
+			setRunAllActive(false);
 		}
 	}, [executeNotebookNode]);
 
@@ -2015,9 +2066,13 @@ export function ChatApp(): React.ReactElement {
 					icon="run-next"
 					label="Run next step"
 					className="run-next"
+					// runAllActive is checked alongside busy, which flickers false
+					// between steps and would otherwise let a sequence be
+					// restarted on top of itself.
 					disabled={
 						!ready ||
 						busy ||
+						runAllActive ||
 						notebookBusy ||
 						!notebook?.selectedNodeId
 					}
@@ -2030,6 +2085,7 @@ export function ChatApp(): React.ReactElement {
 					disabled={
 						!ready ||
 						busy ||
+						runAllActive ||
 						notebookBusy ||
 						!notebook?.nodes.some((node) => node.kind === "notebook")
 					}
@@ -2458,7 +2514,10 @@ export function ChatApp(): React.ReactElement {
 				/>
 				{running && shellRunning ? (
 					<button disabled>Running…</button>
-				) : running ? (
+				) : running || runAllActive ? (
+					// runAllActive keeps Stop reachable in the gap between two
+					// steps, where `running` is false but the sequence is still
+					// in flight.
 					<button
 						className="stop"
 						onClick={() => void stop()}
