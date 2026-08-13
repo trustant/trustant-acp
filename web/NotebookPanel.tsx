@@ -172,12 +172,15 @@ export function NotebookPanel({
 						}`}
 						key={entry.path}
 					>
-						{/* Every entry carries the marker; the tutorial spotlights
-						    whichever one comes first in the catalog. */}
+						{/* Every entry carries the marker. The label is explicit
+						    rather than read off the rendered text so the host can
+						    spotlight a template by name ("App Suite") wherever the
+						    catalog happens to order it. */}
 						<button
 							className="notebook-list-load"
 							data-tour="notebook-entry"
 							data-tour-entry=""
+							data-tour-label={entry.name}
 							disabled={busy}
 							onClick={() => onSelect(entry)}
 						>

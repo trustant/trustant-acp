@@ -1103,15 +1103,26 @@ The Trustable host embeds this UI in an iframe served from a different
 hostname, so its guided tutorials cannot read this document. The bridge closes
 that gap for the duration of a tutorial and only then:
 
-- The host posts `{source: "trustable-tour-host", type: "start" | "stop"}` to
-  the frame. Messages from any window other than the direct parent are ignored.
+- The host posts `{source: "trustable-tour-host", type: "start" | "stop" |
+  "scroll"}` to the frame. Messages from any window other than the direct parent
+  are ignored.
 - While started, the frame posts `{source: "trustable-tour-frame", type:
-  "frame", targets, state}` back to the requesting origin every 200 ms — never
-  to `*` — and stops on `stop`.
-- `targets` maps each `data-tour` name to the viewport rect of the first
-  visible element carrying it, plus its `disabled` flag. The host adds the
-  iframe offset and draws the spotlight in its own document; the hole it leaves
-  passes clicks through to the real control.
+  "frame", version, targets, state}` back to the requesting origin every 200 ms
+  — never to `*` — and stops on `stop`.
+- `version` is the protocol revision, currently `2`. Revision 1 reported one
+  rect per name. The host needs to tell a bridge that is too old from no bridge
+  at all, because both otherwise look like a tutorial step that never advances.
+- `targets` maps each `data-tour` name to **every** visible element carrying it,
+  in document order, as `{x, y, width, height, disabled, label}`. `label` is
+  `data-tour-label` when present, else the trimmed text, so the host can pick a
+  catalog entry by name rather than by position. The host adds the iframe
+  offset and draws the spotlight in its own document; the hole it leaves passes
+  clicks through to the real control.
+- `{type: "scroll", target, index}` brings one marked control into view and
+  reports immediately afterwards. Wheel events over the host's overlay scroll
+  the host document, never this frame, so without it a control below our fold
+  is unreachable for the whole tutorial. Honoured only for an origin that has
+  already started a tour.
 - `state` is derived from the DOM, not from React: `panelOpen`, `entries`
   (catalog size), `nodes` (steps in the loaded template), `firstNodeRunState`
   (`pending` / `running` / `done`), and `running`. The host advances a step only
@@ -1120,7 +1131,8 @@ that gap for the duration of a tutorial and only then:
 Marked controls: `notebook-toggle`, `run-next`, `run-all` (header),
 `notebook-panel`, `notebook-close`, `notebook-refresh`, `notebook-source`,
 `notebook-entry` (template panel), and `notebook-node-run` (step). Steps carry
-`data-tour-node` and catalog entries `data-tour-entry` for counting. Ad-hoc
+`data-tour-node`, and catalog entries `data-tour-entry` for counting plus
+`data-tour-label` for naming. Ad-hoc
 input nodes are deliberately unmarked so "the first step" means the first
 template step. These names are a cross-repository contract with
 `trustable-app/web/js/tutorial.js`.
