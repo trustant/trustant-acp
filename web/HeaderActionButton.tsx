@@ -38,6 +38,11 @@ interface HeaderActionButtonProps
 	> {
 	icon: HeaderActionIcon;
 	label: string;
+	/**
+	 * Marks the button as a guided-tutorial target. Declared explicitly because
+	 * `data-*` props are only inferred on intrinsic elements, not on components.
+	 */
+	"data-tour"?: string;
 }
 
 export function HeaderActionButton({

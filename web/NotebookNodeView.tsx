@@ -98,6 +98,9 @@ export function NotebookNodeView({
 			} run-${runState}`}
 			data-node-kind={node.kind}
 			data-run-state={runState}
+			// Read across the frame boundary by the host's guided tutorials,
+			// which wait on the first step's run state (see web/tour-bridge.ts).
+			data-tour-node={node.kind === "notebook" ? "" : undefined}
 			data-moving={moving ? "true" : undefined}
 			// Focusable only while moving: the node is not a tab stop in the
 			// ordinary reading flow, it just needs to receive the arrows.
@@ -175,7 +178,12 @@ export function NotebookNodeView({
 						</>
 					) : (
 						<>
-							<button title="Run step" disabled={busy} onClick={onRun}>
+							<button
+								title="Run step"
+								data-tour="notebook-node-run"
+								disabled={busy}
+								onClick={onRun}
+							>
 								Run
 							</button>
 							<button title="Edit prompt in place" disabled={busy} onClick={onEdit}>

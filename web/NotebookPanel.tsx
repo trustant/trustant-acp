@@ -60,7 +60,13 @@ export function NotebookPanel({
 	const effectiveFile = saveFile.trim() || defaultPath(saveName);
 
 	return (
-		<aside className="notebook-panel" aria-label="Template panel">
+		// data-tour markers are read by the guided tutorials the Trustable host
+		// runs across the frame boundary (see web/tour-bridge.ts).
+		<aside
+			className="notebook-panel"
+			aria-label="Template panel"
+			data-tour="notebook-panel"
+		>
 			<div className="notebook-panel-header">
 				<div>
 					<strong>Templates</strong>
@@ -68,12 +74,17 @@ export function NotebookPanel({
 						GitHub-backed prompt templates
 					</div>
 				</div>
-				<button className="icon-button" title="Close" onClick={onClose}>
+				<button
+					className="icon-button"
+					title="Close"
+					data-tour="notebook-close"
+					onClick={onClose}
+				>
 					×
 				</button>
 			</div>
 
-			<div className="notebook-active">
+			<div className="notebook-active" data-tour="notebook-source">
 				<div>
 					<strong>Source</strong>
 					<code>
@@ -84,6 +95,7 @@ export function NotebookPanel({
 				</div>
 				<button
 					className="notebook-primary"
+					data-tour="notebook-refresh"
 					disabled={busy}
 					onClick={onRefresh}
 				>
@@ -160,8 +172,12 @@ export function NotebookPanel({
 						}`}
 						key={entry.path}
 					>
+						{/* Every entry carries the marker; the tutorial spotlights
+						    whichever one comes first in the catalog. */}
 						<button
 							className="notebook-list-load"
+							data-tour="notebook-entry"
+							data-tour-entry=""
 							disabled={busy}
 							onClick={() => onSelect(entry)}
 						>

@@ -1096,3 +1096,31 @@ or developer-machine path.
   `aria-label` and one native `title` tooltip. No second CSS tooltip is rendered.
 - Icon-only presentation does not change action availability, disabled state,
   or click behavior.
+
+## Guided-tutorial bridge (`web/tour-bridge.ts`)
+
+The Trustable host embeds this UI in an iframe served from a different
+hostname, so its guided tutorials cannot read this document. The bridge closes
+that gap for the duration of a tutorial and only then:
+
+- The host posts `{source: "trustable-tour-host", type: "start" | "stop"}` to
+  the frame. Messages from any window other than the direct parent are ignored.
+- While started, the frame posts `{source: "trustable-tour-frame", type:
+  "frame", targets, state}` back to the requesting origin every 200 ms — never
+  to `*` — and stops on `stop`.
+- `targets` maps each `data-tour` name to the viewport rect of the first
+  visible element carrying it, plus its `disabled` flag. The host adds the
+  iframe offset and draws the spotlight in its own document; the hole it leaves
+  passes clicks through to the real control.
+- `state` is derived from the DOM, not from React: `panelOpen`, `entries`
+  (catalog size), `nodes` (steps in the loaded template), `firstNodeRunState`
+  (`pending` / `running` / `done`), and `running`. The host advances a step only
+  when this state confirms the action completed.
+
+Marked controls: `notebook-toggle`, `run-next`, `run-all` (header),
+`notebook-panel`, `notebook-close`, `notebook-refresh`, `notebook-source`,
+`notebook-entry` (template panel), and `notebook-node-run` (step). Steps carry
+`data-tour-node` and catalog entries `data-tour-entry` for counting. Ad-hoc
+input nodes are deliberately unmarked so "the first step" means the first
+template step. These names are a cross-repository contract with
+`trustable-app/web/js/tutorial.js`.
