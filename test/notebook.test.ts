@@ -139,9 +139,12 @@ describe("template front matter", () => {
 
 describe("notebook Markdown", () => {
 	it("parses separator lines without splitting horizontal rules inside text", () => {
+		// Only blank edge *lines* are dropped; whitespace inside a line is the
+		// prompt's own content and survives, which is what makes parse and
+		// serialize round-trip (see the next test).
 		expect(
 			parseNotebookMarkdown(" first \n\n---\n\nsecond\nline\n---\nthird\n"),
-		).toEqual(["first", "second\nline", "third"]);
+		).toEqual([" first ", "second\nline", "third"]);
 	});
 
 	it("serializes deterministically", () => {
