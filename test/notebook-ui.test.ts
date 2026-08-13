@@ -82,6 +82,15 @@ describe("template UI", () => {
 		expect(html).toContain("Please Select Agent");
 	});
 
+	// The composer now shows Stop while a run-all is in flight as well as during
+	// a turn, so guard the idle render: at rest it must still offer Send only.
+	it("offers Send and no Stop when nothing is running", () => {
+		const html = renderToStaticMarkup(React.createElement(ChatApp));
+		expect(html).toContain(">Send<");
+		expect(html).not.toContain(">Stop<");
+		expect(html).not.toContain("Stopping…");
+	});
+
 	it("shows the managed source read-only, without source configuration fields", () => {
 		const html = panel();
 		expect(html).toContain("trustable-ai/templates · main");

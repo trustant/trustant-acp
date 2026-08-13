@@ -255,6 +255,31 @@ export function removeNotebookIndexEntry(
 	return kept.length ? `${kept.join("\n")}\n` : "";
 }
 
+/**
+ * Outcome of running one notebook step.
+ *
+ * "cancelled" is distinct from "failed" because a stop is a deliberate user
+ * action, not an error: it ends the run without an error banner and leaves the
+ * selection on the stopped step. A bare boolean cannot express that — and a
+ * cancelled ACP turn resolves successfully, so the send path alone cannot tell
+ * a cancel from a completion.
+ */
+export type NotebookRunResult = "ok" | "failed" | "cancelled";
+
+/**
+ * Whether a run-all sequence should proceed to the next step.
+ *
+ * `runAllActive` is the caller's run flag, which a stop clears — it covers a
+ * stop landing in the gap between two steps, where no step result reports it.
+ */
+export function shouldContinueRunAll(
+	result: NotebookRunResult,
+	runAllActive: boolean,
+): boolean {
+	if (!runAllActive) return false;
+	return result === "ok";
+}
+
 /** Select the next persisted notebook node, skipping unpinned input nodes. */
 export function advanceNotebookSelection(
 	nodes: NotebookNode[],

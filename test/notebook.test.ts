@@ -15,6 +15,7 @@ import {
 	removeNotebookNode,
 	serializeNotebookMarkdown,
 	serializeTemplateDocument,
+	shouldContinueRunAll,
 } from "../src/services/notebook";
 import type { NotebookNode } from "../src/types/notebook";
 
@@ -315,5 +316,27 @@ describe("notebook workflow", () => {
 			title: "t".repeat(2_000),
 			status: "s".repeat(200),
 		});
+	});
+});
+
+describe("shouldContinueRunAll", () => {
+	it("continues to the next step after a successful one", () => {
+		expect(shouldContinueRunAll("ok", true)).toBe(true);
+	});
+
+	it("stops the sequence when a step fails", () => {
+		expect(shouldContinueRunAll("failed", true)).toBe(false);
+	});
+
+	// A stop during a step: the step reports the cancel even though a cancelled
+	// ACP turn resolves successfully.
+	it("stops the sequence when a step is cancelled", () => {
+		expect(shouldContinueRunAll("cancelled", true)).toBe(false);
+	});
+
+	// A stop between two steps: no step result reports it, so the cleared run
+	// flag is the only signal.
+	it("stops when the run flag was cleared, even after a successful step", () => {
+		expect(shouldContinueRunAll("ok", false)).toBe(false);
 	});
 });
