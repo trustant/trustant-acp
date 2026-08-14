@@ -1019,6 +1019,19 @@ each step's prompt is re-read at execution time so a mid-run edit takes effect,
 and a failed step ends the run instead of firing the remainder into a broken
 session.
 
+**Stop aborts the whole run**, not merely the in-flight step. The composer Stop
+button (§ "Composer") is the single control and stays available in the gap
+between two steps, where no turn is running but the sequence is still live.
+Selection remains on the stopped step so Run all resumes from there, and no
+error banner is shown — a deliberate stop is not a failure.
+
+The run loop cannot rely on the step's own outcome to detect this: a cancelled
+turn resolves successfully (`agent.ts` returns `{stopReason:'cancelled'}` as a
+normal result, and `acp-client.ts` swallows abort errors). The browser therefore
+records the cancel intent locally when Stop is pressed. That is strictly more
+reliable than plumbing `stopReason` through the wire — which is discarded at
+three layers today — and it keeps the server contract untouched.
+
 Notebook cards show a bounded task title derived from the first Markdown
 heading or meaningful line. Full prompt text is collapsed under **Task
 details**. Each card carries its run state — pending, running, or already run —
