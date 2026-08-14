@@ -2059,6 +2059,7 @@ export function ChatApp(): React.ReactElement {
 					icon="notebook"
 					label="Open templates"
 					className="notebook-toggle"
+					data-tour="notebook-toggle"
 					disabled={notebookBusy}
 					onClick={openNotebookPanel}
 				/>
@@ -2066,6 +2067,7 @@ export function ChatApp(): React.ReactElement {
 					icon="run-next"
 					label="Run next step"
 					className="run-next"
+					data-tour="run-next"
 					// runAllActive is checked alongside busy, which flickers false
 					// between steps and would otherwise let a sequence be
 					// restarted on top of itself.
@@ -2082,6 +2084,7 @@ export function ChatApp(): React.ReactElement {
 					icon="run-all"
 					label="Run all steps"
 					className="run-all"
+					data-tour="run-all"
 					disabled={
 						!ready ||
 						busy ||
