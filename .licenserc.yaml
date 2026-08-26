@@ -125,6 +125,7 @@ header:
     # Documentation and specs — prose, not source
     - '**/*.md'
     - '**/*.MD'
+    - 'vitest.config.mts'
 
   comment: on-failure
 
