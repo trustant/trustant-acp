@@ -32,7 +32,7 @@ import type { TemplateFrontMatter } from "../src/types/notebook";
 const execFile = promisify(execFileCallback);
 
 async function workbench(): Promise<string> {
-	return mkdtemp(join(tmpdir(), "trustable-template-"));
+	return mkdtemp(join(tmpdir(), "trustant-template-"));
 }
 
 function frontMatter(

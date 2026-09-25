@@ -2,9 +2,9 @@
 
 **A signed Contributor License Agreement (CLA) is required before any pull
 request to this repository can be merged.** This repository is a submodule of
-the Trustable project and follows its contribution policy in full.
+the Trustant project and follows its contribution policy in full.
 
-Trustable is released under the GNU Affero General Public License, version 3 or
+Trustant is released under the GNU Affero General Public License, version 3 or
 later (see [LICENSE](LICENSE)). Nuvolaris Inc also offers the software under
 separate commercial terms; the CLA grants the rights needed to do both, while
 you keep the copyright in the code you wrote.

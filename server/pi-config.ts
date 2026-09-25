@@ -24,8 +24,8 @@
  * auth.json carries the credential. pi-acp discovers both through Pi, so no
  * ~/.truacp.json side-store is needed and the key never reaches the browser.
  *
- * The UI flow is "try, then ask" only for standalone TruACP. A Trustable-managed
- * runtime is configured by Trustable's main Configure screen and reports a
+ * The UI flow is "try, then ask" only for standalone TruACP. A Trustant-managed
+ * runtime is configured by Trustant's main Configure screen and reports a
  * managed failure instead of opening a second credential form.
  */
 import { chmod, mkdir, readFile, writeFile } from "fs/promises";
@@ -34,13 +34,13 @@ import { join, dirname } from "path";
 
 /**
  * Standalone TruACP receives a user-supplied endpoint, so it belongs to the
- * neutral local namespace rather than impersonating a Trustable catalog.
+ * neutral local namespace rather than impersonating a Trustant catalog.
  */
 export const PI_PROVIDER = "local";
-const TRUSTABLE_MANAGED_PI_PROVIDERS = new Set([
+const TRUSTANT_MANAGED_PI_PROVIDERS = new Set([
 	"local",
 	"ollama",
-	"trustable",
+	"trustant",
 ]);
 const PI_API_KEY_REF = "$OPENAI_API_KEY";
 
@@ -91,7 +91,7 @@ async function writePrivateJSON(
 }
 
 /**
- * Trustable selects one managed provider in settings.json. Falling back to
+ * Trustant selects one managed provider in settings.json. Falling back to
  * local preserves standalone behavior without allowing arbitrary built-in Pi
  * providers to cross the managed runtime boundary.
  */
@@ -99,7 +99,7 @@ async function activePiProvider(): Promise<string> {
 	const settings = await readJSONObject(piSettingsPath());
 	const configured = settings.defaultProvider;
 	return typeof configured === "string" &&
-		TRUSTABLE_MANAGED_PI_PROVIDERS.has(configured)
+		TRUSTANT_MANAGED_PI_PROVIDERS.has(configured)
 		? configured
 		: PI_PROVIDER;
 }
@@ -125,7 +125,7 @@ async function readStoredPiConfig(): Promise<StoredPiConfig | null> {
 }
 
 /**
- * Resolve Pi's provider credential server-side. Trustable writes the real key
+ * Resolve Pi's provider credential server-side. Trustant writes the real key
  * to auth.json and leaves an environment reference in models.json; standalone
  * configurations can still fall back to an environment variable or legacy
  * literal key. auth.json wins so a generic/dummy process env cannot mask it.
@@ -148,8 +148,8 @@ async function resolvePiApiKey(
 }
 
 /** Explicit launch marker: standalone TruACP must retain its local form. */
-function isTrustableManagedRuntime(): boolean {
-	return process.env.TRUSTABLE_MANAGED_RUNTIME === "1";
+function isTrustantManagedRuntime(): boolean {
+	return process.env.TRUSTANT_MANAGED_RUNTIME === "1";
 }
 
 /** User-facing pi provider config. `model` is optional — resolved from the
@@ -241,7 +241,7 @@ export async function readPiConfig(): Promise<Partial<PiConfig>> {
  * Write/merge a custom OpenAI-compatible provider named `local` into pi's
  * models.json/auth.json, preserving any other providers the user configured.
  * The credential is written only to auth.json; models.json receives the same
- * environment reference used by Trustable-managed installations.
+ * environment reference used by Trustant-managed installations.
  */
 export async function writePiProvider(cfg: PiConfig): Promise<void> {
 	const baseUrl = cfg.baseUrl.trim();
@@ -299,7 +299,7 @@ export interface PiHelloResult {
  * `/models` verifies reachability + auth quickly, which is all the gate needs.
  */
 export async function piHello(): Promise<PiHelloResult> {
-	const managed = isTrustableManagedRuntime();
+	const managed = isTrustantManagedRuntime();
 	const cfg = await readStoredPiConfig();
 	if (!cfg?.baseUrl) {
 		return { ok: false, detail: "Pi is not configured.", managed };

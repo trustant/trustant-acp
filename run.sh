@@ -59,7 +59,7 @@ if ! ip -o link show lima0 >/dev/null 2>&1; then
 		    ./ssh.sh            # shell into it
 		  then, inside the VM:
 		    ./setup.sh          # one-time: ops/go/node/pi-acp + MCP servers, .env
-		    cd trustable-acp && ./run.sh
+		    cd trustant-acp && ./run.sh
 
 		  If you are deliberately running outside Lima, use 'npm run serve' instead —
 		  it has no VM assumptions.
@@ -72,10 +72,10 @@ if [ ! -d "$ACP_DIR" ]; then
 		✗ no app checkout at $ACP_DIR
 
 		  run.sh serves an app from the workbench; that directory has to exist first.
-		  The workbench checkout is created by launching the app from the Trustable
+		  The workbench checkout is created by launching the app from the Trustant
 		  UI (which clones \$WORKSPACE_DIR/workspace/<name> into \$WORKBENCH_DIR/<name>).
 
-		  Either launch the app once from the Trustable UI, or point this run at an
+		  Either launch the app once from the Trustant UI, or point this run at an
 		  existing checkout:
 		    ACP_DIR=/path/to/app ./run.sh
 

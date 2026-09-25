@@ -29,9 +29,9 @@ describe("Pi native configuration", () => {
 	beforeEach(async () => {
 		dir = await mkdtemp(join(tmpdir(), "truacp-pi-"));
 		previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-		previousManaged = process.env.TRUSTABLE_MANAGED_RUNTIME;
+		previousManaged = process.env.TRUSTANT_MANAGED_RUNTIME;
 		process.env.PI_CODING_AGENT_DIR = dir;
-		delete process.env.TRUSTABLE_MANAGED_RUNTIME;
+		delete process.env.TRUSTANT_MANAGED_RUNTIME;
 	});
 
 	afterEach(async () => {
@@ -40,8 +40,8 @@ describe("Pi native configuration", () => {
 			delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		if (previousManaged === undefined)
-			delete process.env.TRUSTABLE_MANAGED_RUNTIME;
-		else process.env.TRUSTABLE_MANAGED_RUNTIME = previousManaged;
+			delete process.env.TRUSTANT_MANAGED_RUNTIME;
+		else process.env.TRUSTANT_MANAGED_RUNTIME = previousManaged;
 		await rm(dir, { recursive: true, force: true });
 	});
 
@@ -137,14 +137,14 @@ describe("Pi native configuration", () => {
 		);
 	});
 
-	it("uses the provider selected by Trustable settings", async () => {
-		process.env.TRUSTABLE_MANAGED_RUNTIME = "1";
+	it("uses the provider selected by Trustant settings", async () => {
+		process.env.TRUSTANT_MANAGED_RUNTIME = "1";
 		await writeFile(
 			join(dir, "models.json"),
 			JSON.stringify({
 				providers: {
-					trustable: {
-						baseUrl: "https://api.trustable.example/v1",
+					trustant: {
+						baseUrl: "https://api.trustant.example/v1",
 						apiKey: "$OPENAI_API_KEY",
 						models: [{ id: "coder" }],
 					},
@@ -158,19 +158,19 @@ describe("Pi native configuration", () => {
 		);
 		await writeFile(
 			join(dir, "settings.json"),
-			JSON.stringify({ defaultProvider: "trustable" }),
+			JSON.stringify({ defaultProvider: "trustant" }),
 		);
 		await writeFile(
 			join(dir, "auth.json"),
 			JSON.stringify({
-				trustable: { type: "api_key", key: "managed-secret" },
+				trustant: { type: "api_key", key: "managed-secret" },
 				local: { type: "api_key", key: "stale-secret" },
 			}),
 		);
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async (url: string, init?: RequestInit) => {
-				expect(url).toBe("https://api.trustable.example/v1/models");
+				expect(url).toBe("https://api.trustant.example/v1/models");
 				expect(new Headers(init?.headers).get("authorization")).toBe(
 					"Bearer managed-secret",
 				);
@@ -192,7 +192,7 @@ describe("Pi native configuration", () => {
 	});
 
 	it("marks managed probe failures so the UI does not open its local form", async () => {
-		process.env.TRUSTABLE_MANAGED_RUNTIME = "1";
+		process.env.TRUSTANT_MANAGED_RUNTIME = "1";
 		expect(await piHello()).toEqual({
 			ok: false,
 			detail: "Pi is not configured.",

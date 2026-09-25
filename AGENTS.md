@@ -1,7 +1,7 @@
-# trustable-acp - LLM Developer Guide
+# trustant-acp - LLM Developer Guide
 
 ## Overview
-`trustable-acp` is a standalone ACP client (local Node server + browser React UI) for AI agent interaction (Pi, Claude Code, Codex, custom agents) via the Agent Client Protocol. See [SPEC.md](SPEC.md) for the full specification — it is the source of truth.
+`trustant-acp` is a standalone ACP client (local Node server + browser React UI) for AI agent interaction (Pi, Claude Code, Codex, custom agents) via the Agent Client Protocol. See [SPEC.md](SPEC.md) for the full specification — it is the source of truth.
 
 **Tech**: React 19, TypeScript, Node server, Agent Client Protocol (ACP)
 

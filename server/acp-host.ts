@@ -101,13 +101,13 @@ export function buildAgentConfig(
 				extensionPaths: [managed.extensionPath],
 			};
 			// Pi's adapter consumes the credential-free .mcp.json. It receives
-			// only the safe manifest path so trustable-mcp-launch can resolve
+			// only the safe manifest path so trustant-mcp-launch can resolve
 			// host-owned credentials without exposing them to project files.
 			base.env = {
 				...base.env,
-				TRUSTABLE_MANAGED_RUNTIME: "1",
-				TRUSTABLE_RUNTIME_CONFIG: managed.runtimeConfigPath,
-				TRUSTABLE_PI_EXTENSION_PATH: managed.extensionPath,
+				TRUSTANT_MANAGED_RUNTIME: "1",
+				TRUSTANT_RUNTIME_CONFIG: managed.runtimeConfigPath,
+				TRUSTANT_PI_EXTENSION_PATH: managed.extensionPath,
 			};
 		}
 	}

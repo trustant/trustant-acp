@@ -165,7 +165,7 @@ interface ClaudeAuthModal {
 
 const transport = new AcpTransport("");
 const MANAGED_PI_CONFIG_MESSAGE =
-	"Pi is configured by Trustable. Return to the Trustable application list and use Configure to change the endpoint, API key, or model.";
+	"Pi is configured by Trustant. Return to the Trustant application list and use Configure to change the endpoint, API key, or model.";
 
 function browserPreferenceStorage(): Storage | null {
 	try {
@@ -800,7 +800,7 @@ export function ChatApp(): React.ReactElement {
 					const hello = await endpointHello(agent);
 					setPiManaged(hello.managed);
 					if (!hello.ok) {
-						// Trustable owns provider credentials in managed mode. Opening
+						// Trustant owns provider credentials in managed mode. Opening
 						// TruACP's standalone form would duplicate or expose that secret.
 						if (hello.managed) {
 							setBusy(false);
@@ -2033,7 +2033,7 @@ export function ChatApp(): React.ReactElement {
 				)}
 				{/* Gear: reconfigure endpoint (pi) or renew login
 				    (codex/claude) for the selected agent. */}
-				{/* WHY: Trustable Configure is the only credential/model owner
+				{/* WHY: Trustant Configure is the only credential/model owner
 				    for managed Pi. Hiding its redundant gear avoids a control
 				    that can only produce an error, while standalone Pi and the
 				    Codex/Claude login-renewal actions remain available. */}

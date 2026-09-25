@@ -27,7 +27,7 @@ import {
 
 async function managedFixture(root: string) {
 	const workbench = join(root, "workbench", "example");
-	const extensionPath = join(root, "runtime", "trustable-runtime.ts");
+	const extensionPath = join(root, "runtime", "trustant-runtime.ts");
 	const manifestPath = join(root, "runtime", "pi-runtime.json");
 	const watcherLog = join(root, "runtime", "ops-ide-devel.log");
 	const mcpConfig = join(root, "runtime", "mcp.json");
@@ -84,11 +84,11 @@ async function managedFixture(root: string) {
 	return { workbench, extensionPath, manifestPath, watcherLog, mcpConfig };
 }
 
-describe("Trustable managed Pi runtime", () => {
+describe("Trustant managed Pi runtime", () => {
 	it("leaves standalone TruACP unchanged", () => {
 		expect(
 			resolveManagedPiRuntime(process.cwd(), {
-				TRUSTABLE_MANAGED_RUNTIME: "0",
+				TRUSTANT_MANAGED_RUNTIME: "0",
 			}),
 		).toBeUndefined();
 	});
@@ -99,9 +99,9 @@ describe("Trustable managed Pi runtime", () => {
 		);
 		const fixture = await managedFixture(root);
 		const result = resolveManagedPiRuntime(fixture.workbench, {
-			TRUSTABLE_MANAGED_RUNTIME: "1",
-			TRUSTABLE_RUNTIME_CONFIG: fixture.manifestPath,
-			TRUSTABLE_PI_EXTENSION_PATH: fixture.extensionPath,
+			TRUSTANT_MANAGED_RUNTIME: "1",
+			TRUSTANT_RUNTIME_CONFIG: fixture.manifestPath,
+			TRUSTANT_PI_EXTENSION_PATH: fixture.extensionPath,
 		});
 
 		expect(result?.workbench).toMatchObject({
@@ -135,9 +135,9 @@ describe("Trustable managed Pi runtime", () => {
 
 		expect(() =>
 			resolveManagedPiRuntime(other, {
-				TRUSTABLE_MANAGED_RUNTIME: "1",
-				TRUSTABLE_RUNTIME_CONFIG: fixture.manifestPath,
-				TRUSTABLE_PI_EXTENSION_PATH: fixture.extensionPath,
+				TRUSTANT_MANAGED_RUNTIME: "1",
+				TRUSTANT_RUNTIME_CONFIG: fixture.manifestPath,
+				TRUSTANT_PI_EXTENSION_PATH: fixture.extensionPath,
 			}),
 		).toThrow("expected one workbench");
 	});
@@ -153,9 +153,9 @@ describe("Trustable managed Pi runtime", () => {
 
 		expect(() =>
 			resolveManagedPiRuntime(fixture.workbench, {
-				TRUSTABLE_MANAGED_RUNTIME: "1",
-				TRUSTABLE_RUNTIME_CONFIG: fixture.manifestPath,
-				TRUSTABLE_PI_EXTENSION_PATH: fixture.extensionPath,
+				TRUSTANT_MANAGED_RUNTIME: "1",
+				TRUSTANT_RUNTIME_CONFIG: fixture.manifestPath,
+				TRUSTANT_PI_EXTENSION_PATH: fixture.extensionPath,
 			}),
 		).toThrow("missing required servers: openserverless");
 	});
@@ -170,7 +170,7 @@ describe("Trustable managed Pi runtime", () => {
 			piLaunch: {
 				version: 1 as const,
 				workbench: "/workbench/example",
-				extensionPaths: ["/runtime/trustable-runtime.ts"],
+				extensionPaths: ["/runtime/trustant-runtime.ts"],
 			},
 		};
 
@@ -178,12 +178,12 @@ describe("Trustable managed Pi runtime", () => {
 			buildPiSessionRequestMeta(config, "/workbench/example/src"),
 		).toEqual({
 			_meta: {
-				trustable: {
+				trustant: {
 					piLaunch: {
 						version: 1,
 						extensions: {
 							discover: true,
-							paths: ["/runtime/trustable-runtime.ts"],
+							paths: ["/runtime/trustant-runtime.ts"],
 						},
 						skills: { discover: true },
 					},
@@ -199,7 +199,7 @@ describe("Trustable managed Pi runtime", () => {
 		const servers = [
 			{
 				name: "react",
-				command: "trustable-react-mcp",
+				command: "trustant-react-mcp",
 				args: [],
 				env: [],
 			},

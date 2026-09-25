@@ -152,7 +152,7 @@ export class NotebookGitHubService {
 	}
 
 	private source(repository?: string, ref?: string): NotebookSource {
-		const managed = process.env.TRUSTABLE_MANAGED_RUNTIME === "1";
+		const managed = process.env.TRUSTANT_MANAGED_RUNTIME === "1";
 		const selectedRepository = managed
 			? process.env.NOTEBOOK_GITHUB_REPOSITORY
 			: repository;
@@ -169,8 +169,8 @@ export class NotebookGitHubService {
 		const token = this.tokenProvider();
 		if (!token) {
 			throw new Error(
-				process.env.TRUSTABLE_MANAGED_RUNTIME === "1"
-					? "Forbidden: configure notebook GitHub write access in Trustable Configure"
+				process.env.TRUSTANT_MANAGED_RUNTIME === "1"
+					? "Forbidden: configure notebook GitHub write access in Trustant Configure"
 					: "Forbidden: set NOTEBOOK_GITHUB_TOKEN in the server .env to modify notebooks",
 			);
 		}
@@ -195,7 +195,7 @@ export class NotebookGitHubService {
 		const headers: Record<string, string> = {
 			accept: "application/vnd.github+json",
 			"X-GitHub-Api-Version": "2022-11-28",
-			"user-agent": "trustable-acp-notebooks",
+			"user-agent": "trustant-acp-notebooks",
 			...(init.headers as Record<string, string> | undefined),
 		};
 		if (token) headers.authorization = `Bearer ${token}`;

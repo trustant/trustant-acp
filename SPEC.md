@@ -1,8 +1,8 @@
-# trustable-acp — Standalone ACP Client Specification
+# trustant-acp — Standalone ACP Client Specification
 
 ## 1. Goal
 
-`trustable-acp` is a **standalone Agent Client Protocol (ACP) client** that:
+`trustant-acp` is a **standalone Agent Client Protocol (ACP) client** that:
 
 1. Runs as a **local Node server** + **browser React UI** — no editor host required.
 2. Launches Claude Code, Codex, Pi, and any custom ACP agent as subprocesses.
@@ -36,7 +36,7 @@ The codebase is cleanly layered. ACP protocol handling is confined to `src/acp/`
 
 **Portable core (framework-agnostic):** `acp/type-converter.ts`, `acp/acp-handler.ts`, `acp/permission-handler.ts`; all of `types/`; pure `services/` (`message-state`, `message-sender`, `session-state`, `session-helpers`, `settings-normalizer`, `view-registry`); most `hooks/`; pure React (`PermissionBanner`, `TerminalBlock`, `SuggestionPopup`); `utils/logger`, `utils/text`.
 
-In Trustable-managed mode the Node host also owns MCP selection. It validates a
+In Trustant-managed mode the Node host also owns MCP selection. It validates a
 credential-free workbench `.mcp.json` against the private mode-`0600`
 `mcpConfig` named by the runtime manifest. Codex and Claude receive those
 servers through ACP session parameters; Pi receives an empty ACP list and uses
@@ -173,7 +173,7 @@ Single JSON file, loaded at server start, hot-reloadable via the settings API. S
 ## 7. UI
 
 - **Icons**: `lucide-react`; `IconButton.tsx`/`LucideIcon` is the single wrapper, decoupling ~10 components at once.
-- **Toasts / menus / dropdowns / modals**: React toast component; React menu/dropdown; React `Modal` subclasses (`ChangeDirectoryModal`, `EditTitleModal`, `SessionHistoryModal`). `ChangeDirectoryModal` is backed by the trustable-acp server's `POST /api/directory` and starts a new session in the chosen cwd — see §10e.
+- **Toasts / menus / dropdowns / modals**: React toast component; React menu/dropdown; React `Modal` subclasses (`ChangeDirectoryModal`, `EditTitleModal`, `SessionHistoryModal`). `ChangeDirectoryModal` is backed by the trustant-acp server's `POST /api/directory` and starts a new session in the chosen cwd — see §10e.
 - **Markdown** (`MarkdownRenderer.tsx`): `react-markdown` + `remark-gfm` + `remark-math`/`rehype-katex` (LaTeX) + a small remark plugin for `[[wikilinks]]` (only if `promptInjection.wikiLinks`). Internal-link clicks are an app-level "open file" action (opens in project dir / OS).
 - **Views**: `ChatView`/`FloatingChatView`/`SessionManagerView` are browser routes/panels. `FloatingChatView` renders into a plain `document.body` div with an `IChatViewHost` shim — the mount model for the web app.
 - **cwd / paths**: `ChatPanel` cwd is the project dir from config/server, changeable at runtime via the header directory control (§10e); `ToolCallBlock` base-path relative display uses the same project dir value.
@@ -276,7 +276,7 @@ sides against a target app checkout:
      itself: `advertisedIp()` (§10a) *falls back* when `lima0` is absent, so bare
      Linux server builds keep working — only the dev script hard-fails.
   2. **No app checkout at `ACP_DIR`** — the workbench checkout is created by
-     launching the app from the Trustable UI. The message lists what *is* present in
+     launching the app from the Trustant UI. The message lists what *is* present in
      `$WORKBENCH_DIR` so the right `ACP_DIR` is obvious.
 - **Env** — `ACP_ENV` (default `$WORKBENCH_DIR/.env`) is passed through as an absolute
   `--env`, so it is loaded before the chdir and is independent of `ACP_DIR` (§5). The
@@ -301,12 +301,12 @@ Process handling (all three constraints are load-bearing — see the comments in
 
 ### Managed MCP lifecycle and redaction
 
-`TRUSTABLE_RUNTIME_CONFIG` version 2 identifies a private `mcpConfig` outside
+`TRUSTANT_RUNTIME_CONFIG` version 2 identifies a private `mcpConfig` outside
 the workbench. Its names must exactly match the credential-free `.mcp.json`.
 For Codex and Claude, `session/new`, `session/load`, `session/resume`, and
 `session/fork` carry the converted stdio/HTTP entries. Pi continues to use
 `pi-mcp-adapter`; secret-bearing stdio descriptors call the fixed
-`trustable-mcp-launch` host launcher.
+`trustant-mcp-launch` host launcher.
 
 Only one agent process remains initialized. Selecting another agent disconnects
 the previous process tree first, which also closes its persistent MCP servers.
@@ -319,7 +319,7 @@ before browser display or persistence. The Pi policy extension additionally
 blocks direct reads or shell inspection of the private MCP config.
 
 Service isolation remains inside the selected MCP process rather than in agent
-prompts. The private Redis descriptor launches `trustable-redis-mcp`, which
+prompts. The private Redis descriptor launches `trustant-redis-mcp`, which
 qualifies reviewed key, scan, channel, and index arguments with the
 application's private prefix and rejects global or unknown operations. The
 private S3 descriptor names its environment-derived primary connection
@@ -345,7 +345,7 @@ staging the portable JavaScript bundle.
    `dist-bin/truacp.cjs`: everything (ws, ACP SDK, the embedded web UI) inlined,
    only Node builtins external, minified, with a `#!/usr/bin/env node` shebang.
 The build does not install anything into the caller's home directory. Run
-`setup.sh` to install the bundle and generate the `truacp` and `trustable-acp`
+`setup.sh` to install the bundle and generate the `truacp` and `trustant-acp`
 launchers. Keeping that side effect out of `npm run build` lets `image.sh` build
 and stage the artifact without modifying the build host. Because the web UI is
 embedded, the single `.cjs` needs no `dist-web/` or `node_modules` at runtime —
@@ -364,7 +364,7 @@ ordered phases:
 
 1. **Install components** — the supported CLIs and upstream ACP adapters
    globally via npm, register Pi extensions through `pi install`, and build or
-   install the pinned nested Trustable `pi` and `pi-acp` forks. npm extension
+   install the pinned nested Trustant `pi` and `pi-acp` forks. npm extension
    pins live in `pi.version`; fork revisions are pinned by nested Git
    submodules.
 2. **Build** — *only if a `package.json` exists in the current directory*:
@@ -380,7 +380,7 @@ so any failing step aborts it.
 
 ```
 setup.sh + pi.version + dist-bin/truacp.cjs + pi-acp-package.tgz
-pi-packages/*.tgz + extensions/trustable-runtime.ts
+pi-packages/*.tgz + extensions/trustant-runtime.ts
 ```
 
 it installs a complete, working truacp into `~/.local/bin` — no `package.json`,
@@ -440,7 +440,7 @@ The agents and their adapters:
 - The script installs into npm's global prefix when writable, else falls back to a
   user prefix at `~/.local` (bin → `~/.local/bin`, conventionally on PATH), so no
   sudo is needed. `--force` keeps re-runs idempotent (overwrites stale bin links).
-- `pi-acp` comes from the nested Trustable fork, based on upstream v0.0.31. The
+- `pi-acp` comes from the nested Trustant fork, based on upstream v0.0.31. The
   fork natively honors `PI_SKIP_VERSION_CHECK` and `PI_OFFLINE`, exposes
   versioned launch/activity metadata, includes extension commands, and bounds
   abort requests. `setup.sh` never falls back to the public npm adapter because
@@ -450,7 +450,7 @@ The agents and their adapters:
   mode builds all five tarballs; image mode consumes those exact artifacts.
   Installing the public coding-agent package is forbidden because stream-loop
   protection lives below ACP in the owned core.
-- The Trustable local-release build compiles the checked-in Pi model catalogs.
+- The Trustant local-release build compiles the checked-in Pi model catalogs.
   It does not refresh them from models.dev, OpenRouter, NVIDIA, or other live
   catalogs while packaging an unchanged commit. Catalog refresh remains an
   explicit upstream/release-maintenance action, so VM and image builds are
@@ -470,7 +470,7 @@ The agents and their adapters:
 `pi.version`, next to `setup.sh`, is the source of truth for npm-installed
 packages and versions. The `pi-acp` adapter is the explicit exception: its
 source revision is the nested `pi-acp` submodule and its package version is
-recorded in that repository. This separation makes Trustable adapter changes
+recorded in that repository. This separation makes Trustant adapter changes
 reviewable without publishing a replacement npm package.
 
 Each line is a **literal npm install spec**, `<module>@<version>`. `#` comments
@@ -506,8 +506,8 @@ deployment above work:
 | a prebuilt `truacp.cjs` only | skipped | installs the prebuilt bundle |
 | neither | skipped | skipped — agents only, exit **0** |
 
-The build gate tests the **current** directory, so `cd trustable-acp &&
-./setup.sh` builds while `./trustable-acp/setup.sh` from the parent does not. The
+The build gate tests the **current** directory, so `cd trustant-acp &&
+./setup.sh` builds while `./trustant-acp/setup.sh` from the parent does not. The
 bundle lookup is the reverse: it prefers the **script's** directory
 (`<script dir>/dist-bin/truacp.cjs`, then `<script dir>/truacp.cjs`) before the
 current one, so a copied-out five-file set installs correctly regardless of the
@@ -574,7 +574,7 @@ The chat UI connects to a default agent and lets the user switch:
 - Transcript text remains selectable. User and assistant turns expose a copy
   action, and rendered code blocks expose their own copy action. Message copy
   uses the original Markdown; the browser uses `navigator.clipboard` when
-  available and a click-triggered fallback on Trustable's HTTP `*.nip.io`
+  available and a click-triggered fallback on Trustant's HTTP `*.nip.io`
   development route. Success and failure are visible instead of silently
   swallowing clipboard errors.
 - Tool rows preserve the raw ACP status in their DOM metadata and tooltip while
@@ -586,9 +586,9 @@ The chat UI connects to a default agent and lets the user switch:
   Classification never reads free-form assistant prose and does not assume
   that an arbitrary non-zero shell search means "no results".
 
-### Trustable Pi ACP extensions
+### Trustant Pi ACP extensions
 
-TruACP adds `_meta.trustable.piLaunch` version 1 to Pi `session/new` and
+TruACP adds `_meta.trustant.piLaunch` version 1 to Pi `session/new` and
 `session/load`. It enables normal extension/skill discovery without allowing
 raw argv. The fork validates the version and converts only typed extension,
 skill, prompt-template, and session-directory fields into discrete arguments.
@@ -597,11 +597,11 @@ Other ACP agents never receive this metadata.
 The typed contract is the transport for extensions selected by a trusted
 server-side configuration. Browser requests cannot inject extension paths.
 
-In a Trustable-managed runtime, issue #57 adds a versioned host contract.
-TruACP reads `TRUSTABLE_RUNTIME_CONFIG`, validates its canonical workbench,
+In a Trustant-managed runtime, issue #57 adds a versioned host contract.
+TruACP reads `TRUSTANT_RUNTIME_CONFIG`, validates its canonical workbench,
 exact credential-free `.mcp.json`, private `mcpConfig`, local development URL,
 browser-visible application URL, private watcher log, and the extension selected by
-`TRUSTABLE_PI_EXTENSION_PATH`, then includes
+`TRUSTANT_PI_EXTENSION_PATH`, then includes
 only that validated path in `piLaunch.extensions.paths`. The manifest uses the
 version-2 `workbenches` envelope. Managed mode fails
 closed if the contract is absent, malformed, stale, or does not cover the
@@ -609,10 +609,10 @@ requested session cwd.
 Standalone TruACP retains normal Pi discovery without requiring this manifest.
 
 `setup.sh` installs the self-contained extension at
-`~/.local/lib/truacp/extensions/trustable-runtime.ts`. The extension
+`~/.local/lib/truacp/extensions/trustant-runtime.ts`. The extension
 revalidates the contract inside Pi, injects the host context before each turn,
 blocks `write`/`edit` outside the selected workbench, and registers the
-read-only `trustable_runtime_status` tool. The tool returns a bounded, redacted
+read-only `trustant_runtime_status` tool. The tool returns a bounded, redacted
 tail of the host-owned `ops ide devel` log, so deployment diagnosis uses
 evidence instead of guessed paths or process polling. In managed live mode the
 extension also rejects shell inspection/polling of `packages/**/*.zip`, masked
@@ -622,7 +622,7 @@ OpenServerless-wiring mutation.
 The same managed extension treats target-workbench `.env` and
 `.env.production` as immutable: Pi cannot read, write, edit, or inspect them
 through shell, and the environment-mutating `secret_ensure` MCP call is
-rejected. Only the enclosing Trustable configuration UI owns application env
+rejected. Only the enclosing Trustant configuration UI owns application env
 values. The corrected OpenServerless `auth_setup` remains available because it
 atomically adds Redis wiring to the complete token/protected/logout endpoint
 set without reading or writing `.env`. The host prompt requires Redis-backed
@@ -672,9 +672,9 @@ login CLI or config file) — there is no side-store; the server just drives tho
 Configuration is surfaced **automatically on agent select** (standalone pi
 probes `/models` and pops a form on failure; codex/claude check login and pop the
 auth flow) and can be re-triggered via a **⚙️ gear** in the header. In a
-Trustable-managed runtime (`TRUSTABLE_MANAGED_RUNTIME=1`), Pi configuration is
-owned by Trustable, so the redundant Pi gear is hidden and failures direct the
-user to Trustable's main Configure screen. Standalone Pi keeps its gear, while
+Trustant-managed runtime (`TRUSTANT_MANAGED_RUNTIME=1`), Pi configuration is
+owned by Trustant, so the redundant Pi gear is hidden and failures direct the
+user to Trustant's main Configure screen. Standalone Pi keeps its gear, while
 Codex and Claude keep their login-renewal gears.
 
 **Pi — try-then-ask, written to pi's native config.** Pi has no headless auth
@@ -683,7 +683,7 @@ platform.openai.com). A custom OpenAI-compatible endpoint is configured through
 pi's native `~/.pi/agent/models.json` and `auth.json`: the custom provider
 (`local`) keeps endpoint/models plus a `$OPENAI_API_KEY` reference in models.json,
 while the real credential lives only in auth.json. In managed mode, TruACP reads
-the active `local`, `ollama`, or `trustable` provider from
+the active `local`, `ollama`, or `trustant` provider from
 `settings.json.defaultProvider`; pi-acp then discovers the same native
 configuration.
 The UI flow is **"try, then ask"**: on selecting pi, the server probes the
@@ -693,7 +693,7 @@ cause on cold/large models (e.g. Ollama). If it lists models, the session starts
 If not, standalone mode opens a popup collecting **only Base URL + API key**;
 `POST /api/pi/config/set` fetches `/models`, writes endpoint/models to
 models.json and the key to auth.json, then retries the probe. The config GET API
-never returns the stored key. Managed mode shows the Trustable Configure message
+never returns the stored key. Managed mode shows the Trustant Configure message
 instead. (`server/pi-config.ts`.)
 
 **Codex — ChatGPT device-code login.** Codex authenticates out-of-band via the
@@ -759,7 +759,7 @@ value is always one of the advertised choices, and a `thought_level` change
 reports the level Pi actually applied rather than the level requested, so a
 client that verifies the echo cannot be told a clamped effort was honored.
 
-**Managed deployment ownership.** When Trustable supplies the versioned runtime
+**Managed deployment ownership.** When Trustant supplies the versioned runtime
 manifest, its Pi extension states that the existing `ops ide devel` watcher is
 the sole owner of live action packaging/deployment. The extension rejects Pi
 `bash`/`shell` calls whose executable segment starts `ops ide deploy` or
@@ -770,8 +770,8 @@ loops. The same guard rejects direct shell access to watcher-owned action ZIPs,
 checker output masking, and repeated checker calls for an unchanged revision.
 After one or more successful OpenServerless `action_new` creations, Pi finishes
 the coherent action/wiring/source batch and calls the extension-owned
-`trustable_runtime_redeploy` tool exactly once. That tool invokes the co-located
-Trustable `/api/redeploy` SSE workflow used by the UI, which safely stops the
+`trustant_runtime_redeploy` tool exactly once. That tool invokes the co-located
+Trustant `/api/redeploy` SSE workflow used by the UI, which safely stops the
 watcher, runs the full deploy, and restarts the watcher. Until it succeeds, the
 extension blocks watcher status, checker, HTTP, and browser verification while
 still allowing the coherent batch to finish. A compatible idempotent
@@ -789,12 +789,12 @@ category/id and must surface a compatibility error instead of silently
 continuing in a prompted or read-only mode when the required value is absent.
 Global `permissions.autoAllow` remains `false`; the full-permission decision is
 explicit and agent-specific rather than approving arbitrary permission requests
-from custom agents. In a Trustable-managed deployment, the VM or pod is the
+from custom agents. In a Trustant-managed deployment, the VM or pod is the
 isolation boundary for these autonomous agents. Custom agents keep their
 advertised/default permission behavior.
 
-For Pi, Trustable owns the provider boundary. The active provider is `trustable`
-for the Trustable status catalog, `ollama` for embedded/status-backed Ollama,
+For Pi, Trustant owns the provider boundary. The active provider is `trustant`
+for the Trustant status catalog, `ollama` for embedded/status-backed Ollama,
 or `local` for provided/custom endpoints. Pi settings contain only
 `enabledModels: ["<active-provider>/*"]`, and the TruACP header retains only
 option values with that same active prefix. Both controls are required because
@@ -808,18 +808,18 @@ New REST endpoints: `POST /api/pi/hello`, `/api/pi/config/{get,set}`,
 ## 10e. Change directory & new session (ACP-native)
 
 The working directory (**cwd**) is the entire filesystem contract with an agent
-(§4). Two runtime operations are exposed **by the trustable-acp server** (the local
+(§4). Two runtime operations are exposed **by the trustant-acp server** (the local
 Node server, `server/`) — driven from the browser UI over the same REST transport as
 every other call (§6), without restarting the server: **changing the default project
 directory** and **creating a new session in a chosen directory**. Both are handled
-in the trustable-acp server's `routes.ts`/`session-host.ts` and drive the ACP core
+in the trustant-acp server's `routes.ts`/`session-host.ts` and drive the ACP core
 directly — no agent-specific code path — so they work for any ACP agent the server
 launches.
 
 The `cwd` param is already threaded end-to-end (`routes.ts` `/api/session/{new,load,
 resume,fork,list}` all read `body.cwd ?? host.projectDir()`; `transport.ts` methods
 accept an optional `cwd`; `session-host.ts` `projectDir()` is the fallback).
-Trustable's managed browser UI intentionally uses the single launch-time
+Trustant's managed browser UI intentionally uses the single launch-time
 `projectDir`: the enclosing application already selects the workbench.
 
 ### Change directory — default project cwd
@@ -861,7 +861,7 @@ rejected instead of falling back to the default directory.
 
 ### Managed UI (§10c connect flow)
 
-- The Trustable-managed header does not display the absolute cwd. It is an
+- The Trustant-managed header does not display the absolute cwd. It is an
   internal server path, consumes scarce horizontal space, and cannot be changed
   meaningfully without leaving the workbench selected by the enclosing app.
 - A prominent, non-wrapping **"New session"** action creates a new session in the
@@ -908,7 +908,7 @@ wire name for types, routes, environment variables, CSS classes, and the session
 sidecar, so existing workspaces and persisted sessions keep working unchanged.
 
 The default source is `trustable-ai/templates` on `main`. In managed mode,
-Trustable's main Configure screen owns repository/ref and write access, then
+Trustant's main Configure screen owns repository/ref and write access, then
 launch injects `NOTEBOOK_GITHUB_REPOSITORY`, `NOTEBOOK_GITHUB_REF`, and
 `NOTEBOOK_GITHUB_TOKEN` only into the TruACP process. Managed APIs ignore
 browser-authored source overrides. The panel displays the active source
@@ -1065,16 +1065,16 @@ The complete product contract is [spec/notebook.md](../spec/notebook.md).
 
 ## Upstream Pi runtime ownership (issue #71)
 
-This section supersedes earlier fork-specific Pi packaging language. Trustable
+This section supersedes earlier fork-specific Pi packaging language. Trustant
 uses the exact upstream `@earendil-works/pi-*` `0.82.0` package set recorded in
 `pi.version`; `setup.sh` must verify each reviewed SHA-512 value from
 `pi.integrity` before installation. The ACP repository must not contain a `pi`
 gitlink, build the Pi source tree, accept prebuilt `pi-packages`, or fall back to
 an unpinned registry release. The separately owned `pi-acp` fork remains pinned
-because it supplies Trustable's ACP launch and lifecycle behavior.
+because it supplies Trustant's ACP launch and lifecycle behavior.
 
-Trustable-specific repeated-stream protection belongs to
-`extensions/trustable-runtime.ts`, using upstream Pi's `message_update`,
+Trustant-specific repeated-stream protection belongs to
+`extensions/trustant-runtime.ts`, using upstream Pi's `message_update`,
 `message_end`, and `ctx.abort()` extension contracts. Four occurrences of one
 normalized 32-word window within a single assistant text response abort the
 active provider run and finalize that assistant message with an explicit error.
@@ -1112,14 +1112,14 @@ or developer-machine path.
 
 ## Guided-tutorial bridge (`web/tour-bridge.ts`)
 
-The Trustable host embeds this UI in an iframe served from a different
+The Trustant host embeds this UI in an iframe served from a different
 hostname, so its guided tutorials cannot read this document. The bridge closes
 that gap for the duration of a tutorial and only then:
 
-- The host posts `{source: "trustable-tour-host", type: "start" | "stop" |
+- The host posts `{source: "trustant-tour-host", type: "start" | "stop" |
   "scroll"}` to the frame. Messages from any window other than the direct parent
   are ignored.
-- While started, the frame posts `{source: "trustable-tour-frame", type:
+- While started, the frame posts `{source: "trustant-tour-frame", type:
   "frame", version, targets, state}` back to the requesting origin every 200 ms
   — never to `*` — and stops on `stop`.
 - `version` is the protocol revision, currently `2`. Revision 1 reported one

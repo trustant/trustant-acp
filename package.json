@@ -1,5 +1,5 @@
 {
-	"name": "trustable-acp",
+	"name": "trustant-acp",
 	"version": "0.11.0",
 	"description": "Standalone ACP client — use AI coding agents via the Agent Client Protocol",
 	"main": "main.js",

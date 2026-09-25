@@ -16,16 +16,16 @@
  */
 
 /**
- * Trustable Pi execution contract — version 2.
+ * Trustant Pi execution contract — version 2.
  *
  * This file is installed beside the TruACP server and passed to Pi through the
- * typed `_meta.trustable.piLaunch` contract. It deliberately has no dependency
- * on trustable-acp source files so the packaged VM/pod artifact is complete.
+ * typed `_meta.trustant.piLaunch` contract. It deliberately has no dependency
+ * on trustant-acp source files so the packaged VM/pod artifact is complete.
  */
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-export interface TrustableRuntimeWorkbench {
+export interface TrustantRuntimeWorkbench {
 	app: string;
 	workspace: string;
 	developmentUrl: string;
@@ -96,12 +96,12 @@ interface PendingToolAttempt {
 	reactValidation: boolean;
 }
 
-export interface TrustableRedeployResult {
+export interface TrustantRedeployResult {
 	app: string;
 	actionList: string;
 }
 
-export type TrustableRedeployFetch = (
+export type TrustantRedeployFetch = (
 	input: string | URL,
 	init?: RequestInit,
 ) => Promise<Response>;
@@ -111,7 +111,7 @@ interface ExtensionContext {
 	abort(): void;
 }
 
-interface TrustableExtensionApi {
+interface TrustantExtensionApi {
 	on(
 		event: "before_agent_start",
 		handler: (
@@ -217,7 +217,7 @@ export function managedRepeatedStreamTextDetected(
 function nonEmptyString(value: unknown, field: string): string {
 	if (typeof value !== "string" || !value.trim()) {
 		throw new Error(
-			`Trustable runtime ${field} must be a non-empty string`,
+			`Trustant runtime ${field} must be a non-empty string`,
 		);
 	}
 	return value;
@@ -232,13 +232,13 @@ function canonicalDirectory(path: string, field: string): string {
 	const value = nonEmptyString(path, field);
 	if (!isAbsolute(value)) {
 		throw new Error(
-			`Trustable runtime ${field} must be absolute: ${value}`,
+			`Trustant runtime ${field} must be absolute: ${value}`,
 		);
 	}
 	const canonical = realpathSync(value);
 	if (!statSync(canonical).isDirectory()) {
 		throw new Error(
-			`Trustable runtime ${field} is not a directory: ${value}`,
+			`Trustant runtime ${field} is not a directory: ${value}`,
 		);
 	}
 	return canonical;
@@ -251,17 +251,17 @@ function canonicalDirectory(path: string, field: string): string {
  * extension must not trust process cwd or a manifest that changed between
  * adapter startup and Pi loading.
  */
-export function loadTrustableRuntimeManifest(
+export function loadTrustantRuntimeManifest(
 	workingDirectory = process.cwd(),
 	env: NodeJS.ProcessEnv = process.env,
-): TrustableRuntimeWorkbench {
-	if (env.TRUSTABLE_MANAGED_RUNTIME !== "1") {
+): TrustantRuntimeWorkbench {
+	if (env.TRUSTANT_MANAGED_RUNTIME !== "1") {
 		throw new Error(
-			"Trustable runtime extension requires TRUSTABLE_MANAGED_RUNTIME=1",
+			"Trustant runtime extension requires TRUSTANT_MANAGED_RUNTIME=1",
 		);
 	}
 	const manifestPath = nonEmptyString(
-		env.TRUSTABLE_RUNTIME_CONFIG,
+		env.TRUSTANT_RUNTIME_CONFIG,
 		"manifest path",
 	);
 	const raw = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<
@@ -270,24 +270,24 @@ export function loadTrustableRuntimeManifest(
 	>;
 	if (raw.version !== 2) {
 		throw new Error(
-			`Unsupported Trustable Pi runtime version ${String(raw.version)} (expected 2)`,
+			`Unsupported Trustant Pi runtime version ${String(raw.version)} (expected 2)`,
 		);
 	}
 	const cwd = canonicalDirectory(workingDirectory, "working directory");
 	if (!Array.isArray(raw.workbenches) || raw.workbenches.length === 0) {
 		throw new Error(
-			"Trustable Pi runtime manifest must declare at least one workbench",
+			"Trustant Pi runtime manifest must declare at least one workbench",
 		);
 	}
 	const workbenches = raw.workbenches.map(
-		(rawWorkbench, index): TrustableRuntimeWorkbench => {
+		(rawWorkbench, index): TrustantRuntimeWorkbench => {
 			if (
 				!rawWorkbench ||
 				typeof rawWorkbench !== "object" ||
 				Array.isArray(rawWorkbench)
 			) {
 				throw new Error(
-					`Trustable runtime workbenches[${index}] must be a JSON object`,
+					`Trustant runtime workbenches[${index}] must be a JSON object`,
 				);
 			}
 			const record = rawWorkbench as Record<string, unknown>;
@@ -307,7 +307,7 @@ export function loadTrustableRuntimeManifest(
 			);
 			if (pathIsWithin(workspace, watcherLog)) {
 				throw new Error(
-					`Trustable runtime workbenches[${index}].watcherLog must remain outside the workbench`,
+					`Trustant runtime workbenches[${index}].watcherLog must remain outside the workbench`,
 				);
 			}
 			const mcpConfig = canonicalPrivateFile(
@@ -319,7 +319,7 @@ export function loadTrustableRuntimeManifest(
 			);
 			if (pathIsWithin(workspace, mcpConfig)) {
 				throw new Error(
-					`Trustable runtime workbenches[${index}].mcpConfig must remain outside the workbench`,
+					`Trustant runtime workbenches[${index}].mcpConfig must remain outside the workbench`,
 				);
 			}
 			return {
@@ -347,7 +347,7 @@ export function loadTrustableRuntimeManifest(
 	);
 	if (matches.length !== 1) {
 		throw new Error(
-			`Trustable runtime expected one workbench for ${cwd}, found ${matches.length}`,
+			`Trustant runtime expected one workbench for ${cwd}, found ${matches.length}`,
 		);
 	}
 	const selected = matches[0];
@@ -374,17 +374,17 @@ function canonicalPrivateFile(path: string, field: string): string {
 	const value = nonEmptyString(path, field);
 	if (!isAbsolute(value)) {
 		throw new Error(
-			`Trustable runtime ${field} must be absolute: ${value}`,
+			`Trustant runtime ${field} must be absolute: ${value}`,
 		);
 	}
 	const canonical = realpathSync(value);
 	const info = statSync(canonical);
 	if (!info.isFile()) {
-		throw new Error(`Trustable runtime ${field} is not a file: ${value}`);
+		throw new Error(`Trustant runtime ${field} is not a file: ${value}`);
 	}
 	if ((info.mode & 0o077) !== 0) {
 		throw new Error(
-			`Trustable runtime ${field} must be private (expected mode 0600): ${value}`,
+			`Trustant runtime ${field} must be private (expected mode 0600): ${value}`,
 		);
 	}
 	return canonical;
@@ -398,7 +398,7 @@ function validHttpUrl(value: unknown, field: string): string {
 		(parsed.protocol !== "http:" && parsed.protocol !== "https:")
 	) {
 		throw new Error(
-			`Trustable runtime ${field} must use HTTP or HTTPS: ${raw}`,
+			`Trustant runtime ${field} must use HTTP or HTTPS: ${raw}`,
 		);
 	}
 	return raw;
@@ -410,13 +410,13 @@ function requiredServerNames(value: unknown, index: number): string[] {
 		value.some((entry) => typeof entry !== "string" || !entry.trim())
 	) {
 		throw new Error(
-			`Trustable runtime workbenches[${index}].requiredMcpServers must be an array of non-empty strings`,
+			`Trustant runtime workbenches[${index}].requiredMcpServers must be an array of non-empty strings`,
 		);
 	}
 	const names = [...new Set(value as string[])].sort();
 	if (names.length === 0) {
 		throw new Error(
-			`Trustable runtime workbenches[${index}] declares no required MCP servers`,
+			`Trustant runtime workbenches[${index}] declares no required MCP servers`,
 		);
 	}
 	return names;
@@ -444,7 +444,7 @@ function jsonObject(value: unknown): Record<string, unknown> {
  *
  * WHY: current Pi calls the proxy as
  * `mcp({tool:"openserverless_action_new", args:"{...}"})`, while early
- * Trustable tests used `{server:"openserverless", tool:"action_new"}`. Server
+ * Trustant tests used `{server:"openserverless", tool:"action_new"}`. Server
  * discovery also has two real shapes: `{server:"..."}` lists cached tools,
  * while `{connect:"..."}` performs lazy connection plus metadata refresh. A
  * guardrail that recognizes only the early test shapes is visible in tests but
@@ -515,12 +515,12 @@ export function managedMcpInvocation(
 	};
 }
 
-export function trustableRuntimeSystemPrompt(
-	workbench: TrustableRuntimeWorkbench,
+export function trustantRuntimeSystemPrompt(
+	workbench: TrustantRuntimeWorkbench,
 ): string {
 	return [
-		'<trustable_runtime version="2" priority="mandatory">',
-		"  This process is managed by Trustable. This host contract has priority over repository guidance.",
+		'<trustant_runtime version="2" priority="mandatory">',
+		"  This process is managed by Trustant. This host contract has priority over repository guidance.",
 		`  Current application: ${workbench.app}`,
 		`  Workbench root: ${workbench.workspace}`,
 		`  Local development URL: ${workbench.developmentUrl}`,
@@ -532,15 +532,15 @@ export function trustableRuntimeSystemPrompt(
 		"  Treat service MCPs as discovery and read-only verification interfaces. Application schemas, seed data, and writes belong in reproducible setup/actions created through the OpenServerless MCP, never in direct service-MCP repair calls.",
 		"  Run the deterministic React MCP react_validate after frontend mutations. Agentic React is optional selection context, not source validation.",
 		"  The existing ops ide devel watcher is the sole owner of live action deployment. Never run ops ide deploy or start another ops ide devel process.",
-		"  After one or more successful action_new creations, finish the coherent action/wiring/source batch and call trustable_runtime_redeploy exactly once before watcher status, the action checker, or HTTP checks. This invokes the same safe redeploy workflow as the Trustable UI without racing the watcher.",
-		"  After redeploy, call trustable_runtime_status to read the managed watcher evidence, then run the action checker once and perform real HTTP checks. In managed live mode the checker validates source contracts without using sibling ZIP freshness.",
+		"  After one or more successful action_new creations, finish the coherent action/wiring/source batch and call trustant_runtime_redeploy exactly once before watcher status, the action checker, or HTTP checks. This invokes the same safe redeploy workflow as the Trustant UI without racing the watcher.",
+		"  After redeploy, call trustant_runtime_status to read the managed watcher evidence, then run the action checker once and perform real HTTP checks. In managed live mode the checker validates source contracts without using sibling ZIP freshness.",
 		"  Never inspect, search, stat, or poll packages/**/*.zip. Do not infer watcher state from archive paths, process searches, repeated checker calls, or longer timeouts.",
 		"  Use the local development URL for verification and the browser-visible URL only for external verification; do not infer another host.",
-		"  Application .env and .env.production files are immutable agent boundaries. Never read, create, edit, import, synchronize, or regenerate them. Only the user may change application environment values through the Trustable configuration interface; report a missing value without attempting to create it.",
+		"  Application .env and .env.production files are immutable agent boundaries. Never read, create, edit, import, synchronize, or regenerate them. Only the user may change application environment values through the Trustant configuration interface; report a missing value without attempting to create it.",
 		"  For authenticated application pages, create all endpoints first and call the OpenServerless auth_setup tool once with the complete token, protected/session, and logout endpoint sets. It atomically adds Redis wiring; use opaque random session tokens with an expiry, build every key from ctx.REDIS_PREFIX, validate the Redis session on every protected request, and delete it on logout. Never use JWT or an application secret as the session foundation.",
 		"  Never create or edit generated packages/<package>/<action>/__main__.py wrappers or packages/**/*.zip artifacts. Use the exposed OpenServerless action and connector tools; never invent commands such as ops ide action invoke.",
 		"  Execute available bounded checks yourself instead of delegating shell commands to the user.",
-		"</trustable_runtime>",
+		"</trustant_runtime>",
 	].join("\n");
 }
 
@@ -576,13 +576,13 @@ function isSecretPath(
 			resolve(absolute) === resolve(privateMcpConfig)) ||
 		name === ".env" ||
 		name.startsWith(".env.") ||
-		absolute.includes(`${sep}.trustable${sep}secrets${sep}`)
+		absolute.includes(`${sep}.trustant${sep}secrets${sep}`)
 	);
 }
 
 /**
  * Block every direct application env access and every MCP operation that can
- * synthesize a value without the user-facing Trustable configuration flow.
+ * synthesize a value without the user-facing Trustant configuration flow.
  *
  * WHY: a captured long run printed APP_SECRET after Pi inspected `.env`.
  * The environment editor is also the sole configuration owner, so prompt
@@ -600,7 +600,7 @@ export function managedSecretAccessBlockReason(
 		typeof input.path === "string" &&
 		isSecretPath(input.path, workspace, privateMcpConfig)
 	) {
-		return "Trustable blocked direct application env access. Only the user may change .env values through the Trustable configuration interface; report the missing variable without reading or modifying the file.";
+		return "Trustant blocked direct application env access. Only the user may change .env values through the Trustant configuration interface; report the missing variable without reading or modifying the file.";
 	}
 	if (
 		(toolName === "bash" || toolName === "shell") &&
@@ -609,27 +609,27 @@ export function managedSecretAccessBlockReason(
 			input.command,
 		)
 	) {
-		return "Trustable blocked shell access to an application env file. Only the user may change environment values through the Trustable configuration interface.";
+		return "Trustant blocked shell access to an application env file. Only the user may change environment values through the Trustant configuration interface.";
 	}
 	if (
 		(toolName === "bash" || toolName === "shell") &&
 		typeof input.command === "string" &&
 		((privateMcpConfig !== undefined &&
 			input.command.includes(privateMcpConfig)) ||
-			/TRUSTABLE_(?:RUNTIME|MCP)_CONFIG|\.config\/trustable\/runtime\/[^\s"']*mcp\.json/i.test(
+			/TRUSTANT_(?:RUNTIME|MCP)_CONFIG|\.config\/trustant\/runtime\/[^\s"']*mcp\.json/i.test(
 				input.command,
 			))
 	) {
-		return "Trustable blocked access to host-private MCP configuration. Use the managed MCP tools and credential-free server list; never inspect or launch their private process configuration.";
+		return "Trustant blocked access to host-private MCP configuration. Use the managed MCP tools and credential-free server list; never inspect or launch their private process configuration.";
 	}
 	if (
 		(toolName === "bash" || toolName === "shell") &&
 		typeof input.command === "string" &&
-		/(?:^|[;&|]\s*|\b(?:exec|env|timeout|command)\s+)(?:trustable-mcp-launch|trustable-react-mcp|openserverless-mcp|postgres-mcp|redis-mcp-server|mcp-server-milvus|mongodb-mcp-server|mcp-s3)\b/m.test(
+		/(?:^|[;&|]\s*|\b(?:exec|env|timeout|command)\s+)(?:trustant-mcp-launch|trustant-react-mcp|openserverless-mcp|postgres-mcp|redis-mcp-server|mcp-server-milvus|mongodb-mcp-server|mcp-s3)\b/m.test(
 			input.command,
 		)
 	) {
-		return "Trustable blocked direct startup of a managed MCP server. Use the host-selected MCP tools so lifecycle, ordering, reconnection, and credential injection remain managed.";
+		return "Trustant blocked direct startup of a managed MCP server. Use the host-selected MCP tools so lifecycle, ordering, reconnection, and credential injection remain managed.";
 	}
 	const invocation = managedMcpInvocation(toolName, input, knownServers);
 	if (
@@ -637,7 +637,7 @@ export function managedSecretAccessBlockReason(
 		invocation.server === "openserverless" &&
 		invocation.tool === "secret_ensure"
 	) {
-		return "Trustable blocked automatic environment-secret creation. Application env values are user-managed in the Trustable configuration interface; use Redis-backed opaque sessions for page authentication.";
+		return "Trustant blocked automatic environment-secret creation. Application env values are user-managed in the Trustant configuration interface; use Redis-backed opaque sessions for page authentication.";
 	}
 	return undefined;
 }
@@ -683,7 +683,7 @@ export function managedGeneratedArtifactBlockReason(
 		return undefined;
 	}
 	if (basename(target) === "__main__.py" || target.endsWith(".zip")) {
-		return "Trustable blocked a write to an OpenServerless-generated wrapper or deploy artifact. Create actions and add Redis/service wiring with the exposed OpenServerless MCP tools (use auth_setup for the complete authentication endpoint set), then edit only the generated business module.";
+		return "Trustant blocked a write to an OpenServerless-generated wrapper or deploy artifact. Create actions and add Redis/service wiring with the exposed OpenServerless MCP tools (use auth_setup for the complete authentication endpoint set), then edit only the generated business module.";
 	}
 	if (
 		existsSync(workspace) &&
@@ -691,7 +691,7 @@ export function managedGeneratedArtifactBlockReason(
 		parts.length >= 4 &&
 		!existsSync(join(workspace, parts[0], parts[1], parts[2], "__main__.py"))
 	) {
-		return "Trustable blocked creation of a business module before its OpenServerless action scaffold exists. Call the discovered OpenServerless action_new tool first, then edit only the business module it generated.";
+		return "Trustant blocked creation of a business module before its OpenServerless action scaffold exists. Call the discovered OpenServerless action_new tool first, then edit only the business module it generated.";
 	}
 	return undefined;
 }
@@ -740,11 +740,11 @@ export function managedServiceMcpMutationBlockReason(
 	if (!mutation.test(invocation.tool)) {
 		return undefined;
 	}
-	return `Trustable blocked the mutating ${server} MCP tool '${invocation.tool}' during application generation. Put schema and seed changes in an idempotent setup action and application writes in OpenServerless actions; service MCPs remain available for read-only verification.`;
+	return `Trustant blocked the mutating ${server} MCP tool '${invocation.tool}' during application generation. Put schema and seed changes in an idempotent setup action and application writes in OpenServerless actions; service MCPs remain available for read-only verification.`;
 }
 
-export function readTrustableRuntimeStatus(
-	workbench: TrustableRuntimeWorkbench,
+export function readTrustantRuntimeStatus(
+	workbench: TrustantRuntimeWorkbench,
 	requestedLines = 80,
 ): {
 	app: string;
@@ -791,7 +791,7 @@ export function managedShellCommandBlockReason(
 		/(?:^|[/"'\s])packages(?:\/|\s)/i.test(command) &&
 		/(?:\.zip\b|\*\.zip\b)/i.test(command)
 	) {
-		return "Trustable blocked direct inspection or mutation of watcher-owned packages/**/*.zip artifacts. Read trustable_runtime_status, run check_openserverless_actions.sh once for source-contract validation, and verify the real HTTP endpoint.";
+		return "Trustant blocked direct inspection or mutation of watcher-owned packages/**/*.zip artifacts. Read trustant_runtime_status, run check_openserverless_actions.sh once for source-contract validation, and verify the real HTTP endpoint.";
 	}
 	// WHY: these commands mutate the managed VM or bypass connector-owned
 	// scaffolding. Long runs previously used them to repair only the current
@@ -801,21 +801,21 @@ export function managedShellCommandBlockReason(
 			command,
 		)
 	) {
-		return "Trustable blocked direct action administration. Discover and use the OpenServerless MCP action tools so generated wrappers, bindings, and source remain reproducible.";
+		return "Trustant blocked direct action administration. Discover and use the OpenServerless MCP action tools so generated wrappers, bindings, and source remain reproducible.";
 	}
 	if (
 		/(?:^|[;&|]\s*)(?:timeout\s+\S+\s+)?(?:psql|redis-cli|mongosh|mongo|minio|mc|milvus_cli)\b/i.test(
 			command,
 		)
 	) {
-		return "Trustable blocked a direct service CLI. Service MCPs are read-only verification interfaces; implement schema, seed, and application writes in reproducible OpenServerless setup/actions.";
+		return "Trustant blocked a direct service CLI. Service MCPs are read-only verification interfaces; implement schema, seed, and application writes in reproducible OpenServerless setup/actions.";
 	}
 	if (
 		/(?:^|[;&|]\s*)(?:sudo\s+)?(?:apt(?:-get)?\s+install|pip3?\s+install|uv\s+pip\s+install|npm\s+install\s+-g)\b/i.test(
 			command,
 		)
 	) {
-		return "Trustable blocked an ad-hoc dependency installation. Declare action dependencies through the OpenServerless action requirements tool or project package metadata; do not mutate the managed VM.";
+		return "Trustant blocked an ad-hoc dependency installation. Declare action dependencies through the OpenServerless action requirements tool or project package metadata; do not mutate the managed VM.";
 	}
 	if (
 		/(?:generate_wrappers?\.py|__main__\.py)/i.test(command) ||
@@ -823,17 +823,17 @@ export function managedShellCommandBlockReason(
 			command,
 		)
 	) {
-		return "Trustable blocked manual OpenServerless scaffolding or generated-wrapper manipulation. Create the action with the OpenServerless MCP, then edit only its generated business module.";
+		return "Trustant blocked manual OpenServerless scaffolding or generated-wrapper manipulation. Create the action with the OpenServerless MCP, then edit only its generated business module.";
 	}
 	if (
 		/(?:\b(?:sed\s+-i|perl\s+-pi|tee)\b|(?:^|[;&|]\s*)(?:cat|printf|echo)\b|>{1,2})[^\n]*(?:packages|src)\//i.test(
 			command,
 		)
 	) {
-		return "Trustable blocked a shell-based source mutation. Use the typed write/edit tools so workbench boundaries, generated artifacts, frontend validation, and semantic progress are enforced.";
+		return "Trustant blocked a shell-based source mutation. Use the typed write/edit tools so workbench boundaries, generated artifacts, frontend validation, and semantic progress are enforced.";
 	}
 	if (/\bgit\s+(?:checkout|restore|reset|clean)\b/i.test(command)) {
-		return "Trustable blocked a destructive Git recovery command. Inspect the current diff and repair only the intended files without discarding application work.";
+		return "Trustant blocked a destructive Git recovery command. Inspect the current diff and repair only the intended files without discarding application work.";
 	}
 	const managedCommand =
 		/^(?:timeout\s+\S+\s+)?(?:env\s+(?:\S+=\S+\s+)*)?(?:command\s+)?ops\s+ide\s+(deploy|devel)\b/;
@@ -844,7 +844,7 @@ export function managedShellCommandBlockReason(
 	if (!blocked) {
 		return undefined;
 	}
-	return "Trustable blocked a manual ops ide deploy/devel command because the existing managed ops ide devel watcher owns live action deployment. Read trustable_runtime_status, run check_openserverless_actions.sh once and perform HTTP checks; do not retry with a longer timeout.";
+	return "Trustant blocked a manual ops ide deploy/devel command because the existing managed ops ide devel watcher owns live action deployment. Read trustant_runtime_status, run check_openserverless_actions.sh once and perform HTTP checks; do not retry with a longer timeout.";
 }
 
 export function managedCheckerCommandBlockReason(
@@ -857,10 +857,10 @@ export function managedCheckerCommandBlockReason(
 	// WHY: output truncation hid the first actionable watcher/checker error in
 	// the captured long run and made a failed check appear inconclusive.
 	if (/\|\||\|\s*(?:head|tail)\b/.test(command)) {
-		return "Trustable blocked a masked action checker command. Run timeout 60 check_openserverless_actions.sh . once without ||, head, or tail so the complete source-contract result remains visible.";
+		return "Trustant blocked a masked action checker command. Run timeout 60 check_openserverless_actions.sh . once without ||, head, or tail so the complete source-contract result remains visible.";
 	}
 	if (checkerAlreadyRan) {
-		return "Trustable blocked a repeated action checker call without a relevant source or OpenServerless wiring change. Read trustable_runtime_status and verify the real HTTP endpoint; rerun the checker only after a new mutation.";
+		return "Trustant blocked a repeated action checker call without a relevant source or OpenServerless wiring change. Read trustant_runtime_status and verify the real HTTP endpoint; rerun the checker only after a new mutation.";
 	}
 	return undefined;
 }
@@ -1013,7 +1013,7 @@ export class ManagedSemanticCircuit {
 		) {
 			return undefined;
 		}
-		return "Trustable stopped a repeated no-progress strategy after three semantically equivalent failures. Read the concrete MCP/watcher evidence, change the hypothesis or inputs, and make a relevant source/wiring change before trying again.";
+		return "Trustant stopped a repeated no-progress strategy after three semantically equivalent failures. Read the concrete MCP/watcher evidence, change the hypothesis or inputs, and make a relevant source/wiring change before trying again.";
 	}
 
 	recordFailure(signature: string): void {
@@ -1086,7 +1086,7 @@ export function managedBootstrapBlockReason(
 				`mcp({connect:${JSON.stringify(server)}}) or mcp({server:${JSON.stringify(server)}})`,
 		)
 		.join(", ");
-	return `Trustable blocked application work until the mandatory MCP bootstrap succeeds. ${reachability}Discover every missing server and use its exact returned tool schemas: ${discovery}.`;
+	return `Trustant blocked application work until the mandatory MCP bootstrap succeeds. ${reachability}Discover every missing server and use its exact returned tool schemas: ${discovery}.`;
 }
 
 /**
@@ -1142,7 +1142,7 @@ export function managedRedeployVerificationBlockReason(
 	redeployRequired: boolean,
 	knownServers: string[] = [],
 ): string | undefined {
-	if (!redeployRequired || toolName === "trustable_runtime_redeploy") {
+	if (!redeployRequired || toolName === "trustant_runtime_redeploy") {
 		return undefined;
 	}
 	const invocation = managedMcpInvocation(toolName, input, knownServers);
@@ -1152,7 +1152,7 @@ export function managedRedeployVerificationBlockReason(
 			? input.command
 			: "";
 	const verification =
-		toolName === "trustable_runtime_status" ||
+		toolName === "trustant_runtime_status" ||
 		(invocation?.mode === "call" &&
 			(invocation.server === "browser" ||
 				(invocation.server === "openserverless" &&
@@ -1161,18 +1161,18 @@ export function managedRedeployVerificationBlockReason(
 	if (!verification) {
 		return undefined;
 	}
-	return "Trustable requires one safe redeploy after the latest successful action_new batch. Finish the coherent action/wiring/source changes, then call trustable_runtime_redeploy before watcher status, checker, HTTP, or browser verification.";
+	return "Trustant requires one safe redeploy after the latest successful action_new batch. Finish the coherent action/wiring/source changes, then call trustant_runtime_redeploy before watcher status, checker, HTTP, or browser verification.";
 }
 
-interface TrustableRedeployEvent {
+interface TrustantRedeployEvent {
 	event: string;
 	data: string;
 }
 
-export function parseTrustableRedeployEvents(
+export function parseTrustantRedeployEvents(
 	body: string,
-): TrustableRedeployEvent[] {
-	const events: TrustableRedeployEvent[] = [];
+): TrustantRedeployEvent[] {
+	const events: TrustantRedeployEvent[] = [];
 	let event = "";
 	let data: string[] = [];
 	const flush = () => {
@@ -1196,11 +1196,11 @@ export function parseTrustableRedeployEvents(
 	return events;
 }
 
-export async function requestTrustableRedeploy(
+export async function requestTrustantRedeploy(
 	app: string,
-	fetchImpl: TrustableRedeployFetch = fetch,
+	fetchImpl: TrustantRedeployFetch = fetch,
 	timeoutMs = 180_000,
-): Promise<TrustableRedeployResult> {
+): Promise<TrustantRedeployResult> {
 	const url = new URL("http://127.0.0.1:8910/api/redeploy");
 	url.searchParams.set("name", app);
 	const controller = new AbortController();
@@ -1215,18 +1215,18 @@ export async function requestTrustableRedeploy(
 		} catch (error) {
 			const detail =
 				error instanceof Error ? error.message : String(error);
-			throw new Error(`Trustable redeploy request failed: ${detail}`);
+			throw new Error(`Trustant redeploy request failed: ${detail}`);
 		}
 		if (!response.ok) {
 			throw new Error(
-				`Trustable redeploy returned HTTP ${response.status} ${response.statusText}`.trim(),
+				`Trustant redeploy returned HTTP ${response.status} ${response.statusText}`.trim(),
 			);
 		}
-		const events = parseTrustableRedeployEvents(await response.text());
+		const events = parseTrustantRedeployEvents(await response.text());
 		const failure = events.find((entry) => entry.event === "error");
 		if (failure) {
 			throw new Error(
-				`Trustable redeploy failed: ${failure.data || "missing error detail"}`,
+				`Trustant redeploy failed: ${failure.data || "missing error detail"}`,
 			);
 		}
 		const done = [...events]
@@ -1234,14 +1234,14 @@ export async function requestTrustableRedeploy(
 			.find((entry) => entry.event === "done");
 		if (!done) {
 			throw new Error(
-				"Trustable redeploy ended without a completion event",
+				"Trustant redeploy ended without a completion event",
 			);
 		}
 		return { app, actionList: done.data };
 	} catch (error) {
 		if (controller.signal.aborted) {
 			throw new Error(
-				`Trustable redeploy timed out after ${timeoutMs}ms`,
+				`Trustant redeploy timed out after ${timeoutMs}ms`,
 			);
 		}
 		throw error;
@@ -1267,15 +1267,15 @@ function authRedisBindingBlockReason(
 	if (!/(?:auth|login|logout|session|register|signup|me)\b/.test(endpoint)) {
 		return undefined;
 	}
-	return "Trustable blocked piecemeal Redis binding for authentication endpoints. Create the complete endpoint set first, then call the discovered OpenServerless auth_setup tool once with all token, protected/session, and logout endpoints.";
+	return "Trustant blocked piecemeal Redis binding for authentication endpoints. Create the complete endpoint set first, then call the discovered OpenServerless auth_setup tool once with all token, protected/session, and logout endpoints.";
 }
 
-export default function trustableRuntimeExtension(
-	pi: TrustableExtensionApi,
+export default function trustantRuntimeExtension(
+	pi: TrustantExtensionApi,
 ): void {
 	// Throwing during extension load is deliberate: managed Pi must never fall
 	// back to an unguarded session when the host contract is unavailable.
-	const manifest = loadTrustableRuntimeManifest();
+	const manifest = loadTrustantRuntimeManifest();
 	let checkerRanSinceMutation = false;
 	let reactValidationRequired = false;
 	let redeployRequired = false;
@@ -1286,10 +1286,10 @@ export default function trustableRuntimeExtension(
 	let repeatedStreamAborted = false;
 
 	pi.registerTool({
-		name: "trustable_runtime_status",
-		label: "Trustable runtime status",
+		name: "trustant_runtime_status",
+		label: "Trustant runtime status",
 		description:
-			"Read the authoritative, redacted tail of the Trustable-managed ops ide devel watcher log for the current application.",
+			"Read the authoritative, redacted tail of the Trustant-managed ops ide devel watcher log for the current application.",
 		promptSnippet:
 			"Read managed ops ide devel state and recent redacted watcher output.",
 		promptGuidelines: [
@@ -1297,7 +1297,7 @@ export default function trustableRuntimeExtension(
 		],
 		// WHY: the extension is installed outside Pi's npm package tree. Keep
 		// its TypeBox-compatible JSON schema self-contained so loading it never
-		// relies on package resolution from the Trustable installation path.
+		// relies on package resolution from the Trustant installation path.
 		parameters: {
 			type: "object",
 			properties: {
@@ -1311,8 +1311,8 @@ export default function trustableRuntimeExtension(
 			additionalProperties: false,
 		},
 		async execute(_toolCallId, params) {
-			const current = loadTrustableRuntimeManifest();
-			const status = readTrustableRuntimeStatus(current, params.lines);
+			const current = loadTrustantRuntimeManifest();
+			const status = readTrustantRuntimeStatus(current, params.lines);
 			return {
 				content: [
 					{
@@ -1326,12 +1326,12 @@ export default function trustableRuntimeExtension(
 	});
 
 	pi.registerTool({
-		name: "trustable_runtime_redeploy",
-		label: "Trustable redeploy",
+		name: "trustant_runtime_redeploy",
+		label: "Trustant redeploy",
 		description:
-			"Safely stop the managed watcher, deploy all current actions, and restart the watcher through the same Trustable workflow used by the UI Redeploy action.",
+			"Safely stop the managed watcher, deploy all current actions, and restart the watcher through the same Trustant workflow used by the UI Redeploy action.",
 		promptSnippet:
-			"Redeploy the current coherent action batch through the Trustable host.",
+			"Redeploy the current coherent action batch through the Trustant host.",
 		promptGuidelines: [
 			"Call once after one or more action_new creations and after finishing their coherent wiring/source batch.",
 			"Do not replace this tool with ops ide deploy or another ops ide devel process.",
@@ -1342,13 +1342,13 @@ export default function trustableRuntimeExtension(
 			additionalProperties: false,
 		},
 		async execute() {
-			const current = loadTrustableRuntimeManifest();
-			const result = await requestTrustableRedeploy(current.app);
+			const current = loadTrustantRuntimeManifest();
+			const result = await requestTrustantRedeploy(current.app);
 			return {
 				content: [
 					{
 						type: "text",
-						text: `Trustable redeploy completed for ${result.app}.\n${result.actionList}`,
+						text: `Trustant redeploy completed for ${result.app}.\n${result.actionList}`,
 					},
 				],
 				details: {
@@ -1361,13 +1361,13 @@ export default function trustableRuntimeExtension(
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		const current = loadTrustableRuntimeManifest(ctx.cwd);
+		const current = loadTrustantRuntimeManifest(ctx.cwd);
 		// WHY: keep capability discovery for this managed runtime, but let a new
 		// user turn intentionally replace a failed strategy.
 		semanticCircuit.resetForUserTurn();
 		pendingAttempts.clear();
 		return {
-			systemPrompt: `${event.systemPrompt}\n\n${trustableRuntimeSystemPrompt(current)}`,
+			systemPrompt: `${event.systemPrompt}\n\n${trustantRuntimeSystemPrompt(current)}`,
 		};
 	});
 
@@ -1409,7 +1409,7 @@ export default function trustableRuntimeExtension(
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
-		const current = loadTrustableRuntimeManifest(ctx.cwd);
+		const current = loadTrustantRuntimeManifest(ctx.cwd);
 		const invocation = managedMcpInvocation(
 			event.toolName,
 			event.input,
@@ -1505,7 +1505,7 @@ export default function trustableRuntimeExtension(
 			if (typeof requestedPath !== "string" || !requestedPath.trim()) {
 				return {
 					block: true,
-					reason: `Trustable runtime blocked ${event.toolName} without a valid path`,
+					reason: `Trustant runtime blocked ${event.toolName} without a valid path`,
 				};
 			}
 			const absoluteTarget = isAbsolute(requestedPath)
@@ -1514,7 +1514,7 @@ export default function trustableRuntimeExtension(
 			if (!pathIsWithin(current.workspace, absoluteTarget)) {
 				return {
 					block: true,
-					reason: `Trustable runtime blocked a write outside the workbench: ${absoluteTarget}`,
+					reason: `Trustant runtime blocked a write outside the workbench: ${absoluteTarget}`,
 				};
 			}
 			frontendMutation = pathIsWithin(
@@ -1535,7 +1535,7 @@ export default function trustableRuntimeExtension(
 				invocation?.mode === "call" &&
 				invocation.server === "openserverless" &&
 				invocation.tool === "action_new",
-			redeploy: event.toolName === "trustable_runtime_redeploy",
+			redeploy: event.toolName === "trustant_runtime_redeploy",
 			checker:
 				(event.toolName === "bash" || event.toolName === "shell") &&
 				typeof event.input.command === "string" &&
@@ -1597,6 +1597,6 @@ export default function trustableRuntimeExtension(
 	// Keep the validated object live so a malformed load cannot be optimized
 	// away and startup logs identify the selected app without exposing secrets.
 	if (!manifest.app) {
-		throw new Error("Trustable runtime selected no application");
+		throw new Error("Trustant runtime selected no application");
 	}
 }

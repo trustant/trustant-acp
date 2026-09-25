@@ -42,10 +42,10 @@ describe("setup.sh Pi runtime sources", () => {
 			"$INSTALL_PREFIX/lib/node_modules/pi-acp/dist/index.js",
 		);
 		expect(setup).toContain(
-			'cp "$TRUSTABLE_EXTENSION_SOURCE" "$LIB_DIR/extensions/trustable-runtime.ts"',
+			'cp "$TRUSTANT_EXTENSION_SOURCE" "$LIB_DIR/extensions/trustant-runtime.ts"',
 		);
 		expect(setup).toContain(
-			'"$SCRIPT_DIR/extensions/trustable-runtime.ts"',
+			'"$SCRIPT_DIR/extensions/trustant-runtime.ts"',
 		);
 		expect(setup).toContain('INTEGRITY_FILE="$SCRIPT_DIR/pi.integrity"');
 		expect(setup).toContain('npm view "$spec" dist.integrity');

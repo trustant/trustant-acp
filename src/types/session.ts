@@ -387,7 +387,7 @@ export interface SessionInfoUpdate extends SessionUpdateBase {
 	type: "session_info_update";
 	title?: string | null;
 	updatedAt?: string | null;
-	/** Live execution state emitted by the Trustable pi-acp fork. */
+	/** Live execution state emitted by the Trustant pi-acp fork. */
 	activity?: {
 		version: 1;
 		state: string;

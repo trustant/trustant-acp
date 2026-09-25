@@ -1,4 +1,4 @@
-<h1 align="center">Trustable ACP Servrtd</h1>
+<h1 align="center">Trustant ACP Servrtd</h1>
 
 
 # Installation
@@ -41,7 +41,7 @@ already exported in your environment take precedence over the file, so externall
 supplied keys (e.g. Claude, Pi) work without touching it. The file is optional; if
 it is missing you get a warning and keys must come from the environment.
 
-It is recommended you have Trustable up and running.
+It is recommended you have Trustant up and running.
 
 To build the Obsidian plugin bundle instead, use `npm run dev:plugin`.
 

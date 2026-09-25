@@ -66,11 +66,11 @@ describe("NotebookGitHubService", () => {
 		expect(requested).toContain("/repos/trustable-ai/templates/");
 	});
 
-	it("uses the Trustable-managed source instead of browser input", async () => {
-		const previousManaged = process.env.TRUSTABLE_MANAGED_RUNTIME;
+	it("uses the Trustant-managed source instead of browser input", async () => {
+		const previousManaged = process.env.TRUSTANT_MANAGED_RUNTIME;
 		const previousRepository = process.env.NOTEBOOK_GITHUB_REPOSITORY;
 		const previousRef = process.env.NOTEBOOK_GITHUB_REF;
-		process.env.TRUSTABLE_MANAGED_RUNTIME = "1";
+		process.env.TRUSTANT_MANAGED_RUNTIME = "1";
 		process.env.NOTEBOOK_GITHUB_REPOSITORY = "managed/notebooks";
 		process.env.NOTEBOOK_GITHUB_REF = "release";
 		let requested = "";
@@ -91,9 +91,9 @@ describe("NotebookGitHubService", () => {
 			expect(requested).toContain("ref=release");
 		} finally {
 			if (previousManaged === undefined) {
-				delete process.env.TRUSTABLE_MANAGED_RUNTIME;
+				delete process.env.TRUSTANT_MANAGED_RUNTIME;
 			} else {
-				process.env.TRUSTABLE_MANAGED_RUNTIME = previousManaged;
+				process.env.TRUSTANT_MANAGED_RUNTIME = previousManaged;
 			}
 			if (previousRepository === undefined) {
 				delete process.env.NOTEBOOK_GITHUB_REPOSITORY;
@@ -304,9 +304,9 @@ describe("NotebookGitHubService", () => {
 		// The token is issued for the configured repository; honouring a
 		// repository named in a template file would make any template a
 		// redirect for an authenticated write.
-		const previousManaged = process.env.TRUSTABLE_MANAGED_RUNTIME;
+		const previousManaged = process.env.TRUSTANT_MANAGED_RUNTIME;
 		const previousRepository = process.env.NOTEBOOK_GITHUB_REPOSITORY;
-		process.env.TRUSTABLE_MANAGED_RUNTIME = "1";
+		process.env.TRUSTANT_MANAGED_RUNTIME = "1";
 		process.env.NOTEBOOK_GITHUB_REPOSITORY = "managed/templates";
 		const requested: string[] = [];
 		try {
@@ -341,7 +341,7 @@ describe("NotebookGitHubService", () => {
 				requested.every((url) => !url.includes("attacker/repo")),
 			).toBe(true);
 		} finally {
-			process.env.TRUSTABLE_MANAGED_RUNTIME = previousManaged;
+			process.env.TRUSTANT_MANAGED_RUNTIME = previousManaged;
 			process.env.NOTEBOOK_GITHUB_REPOSITORY = previousRepository;
 		}
 	});

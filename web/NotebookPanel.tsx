@@ -77,7 +77,7 @@ export function NotebookPanel({
 	const effectiveFile = saveFile.trim() || defaultPath(saveName);
 
 	return (
-		// data-tour markers are read by the guided tutorials the Trustable host
+		// data-tour markers are read by the guided tutorials the Trustant host
 		// runs across the frame boundary (see web/tour-bridge.ts).
 		<aside
 			className="notebook-panel"
@@ -107,7 +107,7 @@ export function NotebookPanel({
 					<code>
 						{index
 							? `${index.source.repository} · ${index.source.ref}`
-							: "Configured in Trustable"}
+							: "Configured in Trustant"}
 					</code>
 				</div>
 				<button

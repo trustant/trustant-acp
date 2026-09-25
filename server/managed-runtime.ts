@@ -16,7 +16,7 @@
  */
 
 /**
- * Trustable-managed Pi runtime contract validation.
+ * Trustant-managed Pi runtime contract validation.
  *
  * The browser never supplies this data. trustable-app writes a private
  * credential-free manifest and starts TruACP with paths to that manifest and
@@ -27,9 +27,9 @@ import { readFileSync, realpathSync, statSync } from "fs";
 import { isAbsolute, join, relative, resolve } from "path";
 import type { McpServer } from "@agentclientprotocol/sdk";
 
-export const TRUSTABLE_PI_RUNTIME_VERSION = 2 as const;
+export const TRUSTANT_PI_RUNTIME_VERSION = 2 as const;
 
-export interface TrustablePiRuntimeWorkbench {
+export interface TrustantPiRuntimeWorkbench {
 	app: string;
 	workspace: string;
 	developmentUrl: string;
@@ -39,13 +39,13 @@ export interface TrustablePiRuntimeWorkbench {
 	watcherLog: string;
 }
 
-export interface TrustablePiRuntimeManifest {
-	version: typeof TRUSTABLE_PI_RUNTIME_VERSION;
-	workbenches: TrustablePiRuntimeWorkbench[];
+export interface TrustantPiRuntimeManifest {
+	version: typeof TRUSTANT_PI_RUNTIME_VERSION;
+	workbenches: TrustantPiRuntimeWorkbench[];
 }
 
 export interface ManagedPiRuntime {
-	workbench: TrustablePiRuntimeWorkbench;
+	workbench: TrustantPiRuntimeWorkbench;
 	extensionPath: string;
 	mcpServers: McpServer[];
 	redactionSecrets: string[];
@@ -55,7 +55,7 @@ export interface ManagedPiRuntime {
 function nonEmptyString(value: unknown, field: string): string {
 	if (typeof value !== "string" || !value.trim()) {
 		throw new Error(
-			`Trustable runtime ${field} must be a non-empty string`,
+			`Trustant runtime ${field} must be a non-empty string`,
 		);
 	}
 	return value;
@@ -70,7 +70,7 @@ function canonicalDirectory(path: string, field: string): string {
 	const value = nonEmptyString(path, field);
 	if (!isAbsolute(value)) {
 		throw new Error(
-			`Trustable runtime ${field} must be absolute: ${value}`,
+			`Trustant runtime ${field} must be absolute: ${value}`,
 		);
 	}
 	try {
@@ -81,43 +81,43 @@ function canonicalDirectory(path: string, field: string): string {
 		return canonical;
 	} catch (error) {
 		throw new Error(
-			`Trustable runtime ${field} is unavailable at ${value}: ${(error as Error).message}`,
+			`Trustant runtime ${field} is unavailable at ${value}: ${(error as Error).message}`,
 		);
 	}
 }
 
-function parseManifest(path: string): TrustablePiRuntimeManifest {
+function parseManifest(path: string): TrustantPiRuntimeManifest {
 	let raw: unknown;
 	try {
 		raw = JSON.parse(readFileSync(path, "utf8"));
 	} catch (error) {
 		throw new Error(
-			`Failed to read Trustable Pi runtime manifest ${path}: ${(error as Error).message}`,
+			`Failed to read Trustant Pi runtime manifest ${path}: ${(error as Error).message}`,
 		);
 	}
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-		throw new Error("Trustable Pi runtime manifest must be a JSON object");
+		throw new Error("Trustant Pi runtime manifest must be a JSON object");
 	}
 	const record = raw as Record<string, unknown>;
-	if (record.version !== TRUSTABLE_PI_RUNTIME_VERSION) {
+	if (record.version !== TRUSTANT_PI_RUNTIME_VERSION) {
 		throw new Error(
-			`Unsupported Trustable Pi runtime version ${String(record.version)} (expected ${TRUSTABLE_PI_RUNTIME_VERSION})`,
+			`Unsupported Trustant Pi runtime version ${String(record.version)} (expected ${TRUSTANT_PI_RUNTIME_VERSION})`,
 		);
 	}
 	if (!Array.isArray(record.workbenches) || record.workbenches.length === 0) {
 		throw new Error(
-			"Trustable Pi runtime manifest must declare at least one workbench",
+			"Trustant Pi runtime manifest must declare at least one workbench",
 		);
 	}
 	const workbenches = record.workbenches.map(
-		(rawWorkbench, index): TrustablePiRuntimeWorkbench => {
+		(rawWorkbench, index): TrustantPiRuntimeWorkbench => {
 			if (
 				!rawWorkbench ||
 				typeof rawWorkbench !== "object" ||
 				Array.isArray(rawWorkbench)
 			) {
 				throw new Error(
-					`Trustable runtime workbenches[${index}] must be a JSON object`,
+					`Trustant runtime workbenches[${index}] must be a JSON object`,
 				);
 			}
 			const workbench = rawWorkbench as Record<string, unknown>;
@@ -147,7 +147,7 @@ function parseManifest(path: string): TrustablePiRuntimeManifest {
 				)
 			) {
 				throw new Error(
-					`Trustable runtime workbenches[${index}].requiredMcpServers must be an array of non-empty strings`,
+					`Trustant runtime workbenches[${index}].requiredMcpServers must be an array of non-empty strings`,
 				);
 			}
 			const requiredMcpServers = [
@@ -155,7 +155,7 @@ function parseManifest(path: string): TrustablePiRuntimeManifest {
 			].sort();
 			if (requiredMcpServers.length === 0) {
 				throw new Error(
-					`Trustable runtime workbenches[${index}] declares no required MCP servers`,
+					`Trustant runtime workbenches[${index}] declares no required MCP servers`,
 				);
 			}
 			const watcherLog = canonicalPrivateFile(
@@ -167,7 +167,7 @@ function parseManifest(path: string): TrustablePiRuntimeManifest {
 			);
 			if (isPathWithin(workspace, watcherLog)) {
 				throw new Error(
-					`Trustable runtime workbenches[${index}].watcherLog must remain outside the workbench`,
+					`Trustant runtime workbenches[${index}].watcherLog must remain outside the workbench`,
 				);
 			}
 			const mcpConfig = canonicalPrivateFile(
@@ -179,7 +179,7 @@ function parseManifest(path: string): TrustablePiRuntimeManifest {
 			);
 			if (isPathWithin(workspace, mcpConfig)) {
 				throw new Error(
-					`Trustable runtime workbenches[${index}].mcpConfig must remain outside the workbench`,
+					`Trustant runtime workbenches[${index}].mcpConfig must remain outside the workbench`,
 				);
 			}
 			return {
@@ -194,7 +194,7 @@ function parseManifest(path: string): TrustablePiRuntimeManifest {
 		},
 	);
 	return {
-		version: TRUSTABLE_PI_RUNTIME_VERSION,
+		version: TRUSTANT_PI_RUNTIME_VERSION,
 		workbenches,
 	};
 }
@@ -202,7 +202,7 @@ function parseManifest(path: string): TrustablePiRuntimeManifest {
 function canonicalPrivateFile(path: string, field: string): string {
 	const value = nonEmptyString(path, field);
 	if (!isAbsolute(value)) {
-		throw new Error(`Trustable runtime ${field} must be absolute: ${value}`);
+		throw new Error(`Trustant runtime ${field} must be absolute: ${value}`);
 	}
 	try {
 		const canonical = realpathSync(value);
@@ -218,7 +218,7 @@ function canonicalPrivateFile(path: string, field: string): string {
 		return canonical;
 	} catch (error) {
 		throw new Error(
-			`Trustable runtime ${field} is unavailable at ${value}: ${(error as Error).message}`,
+			`Trustant runtime ${field} is unavailable at ${value}: ${(error as Error).message}`,
 		);
 	}
 }
@@ -229,21 +229,21 @@ function validHttpUrl(value: unknown, field: string): string {
 	try {
 		parsed = new URL(raw);
 	} catch {
-		throw new Error(`Trustable runtime ${field} is invalid: ${raw}`);
+		throw new Error(`Trustant runtime ${field} is invalid: ${raw}`);
 	}
 	if (
 		!parsed.hostname ||
 		(parsed.protocol !== "http:" && parsed.protocol !== "https:")
 	) {
 		throw new Error(
-			`Trustable runtime ${field} must use HTTP or HTTPS: ${raw}`,
+			`Trustant runtime ${field} must use HTTP or HTTPS: ${raw}`,
 		);
 	}
 	return raw;
 }
 
 function assertRequiredMcpServers(
-	workbench: TrustablePiRuntimeWorkbench,
+	workbench: TrustantPiRuntimeWorkbench,
 ): void {
 	const configPath = join(workbench.workspace, ".mcp.json");
 	let raw: unknown;
@@ -342,7 +342,7 @@ function sensitiveValues(
 }
 
 function readManagedMcpServers(
-	workbench: TrustablePiRuntimeWorkbench,
+	workbench: TrustantPiRuntimeWorkbench,
 ): { servers: McpServer[]; secrets: string[] } {
 	let raw: unknown;
 	try {
@@ -407,7 +407,7 @@ function canonicalExtensionPath(path: string): string {
 	const value = nonEmptyString(path, "extension path");
 	if (!isAbsolute(value)) {
 		throw new Error(
-			`Trustable runtime extension path must be absolute: ${value}`,
+			`Trustant runtime extension path must be absolute: ${value}`,
 		);
 	}
 	try {
@@ -418,7 +418,7 @@ function canonicalExtensionPath(path: string): string {
 		return canonical;
 	} catch (error) {
 		throw new Error(
-			`Trustable Pi extension is unavailable at ${value}: ${(error as Error).message}`,
+			`Trustant Pi extension is unavailable at ${value}: ${(error as Error).message}`,
 		);
 	}
 }
@@ -434,9 +434,9 @@ export function resolveManagedPiRuntime(
 	workingDirectory: string,
 	env: NodeJS.ProcessEnv = process.env,
 ): ManagedPiRuntime | undefined {
-	if (env.TRUSTABLE_MANAGED_RUNTIME !== "1") return undefined;
+	if (env.TRUSTANT_MANAGED_RUNTIME !== "1") return undefined;
 	const manifestPath = nonEmptyString(
-		env.TRUSTABLE_RUNTIME_CONFIG,
+		env.TRUSTANT_RUNTIME_CONFIG,
 		"manifest path",
 	);
 	const runtimeConfigPath = resolve(manifestPath);
@@ -450,13 +450,13 @@ export function resolveManagedPiRuntime(
 	);
 	if (matches.length !== 1) {
 		throw new Error(
-			`Trustable runtime expected one workbench for ${canonicalWorkingDirectory}, found ${matches.length}`,
+			`Trustant runtime expected one workbench for ${canonicalWorkingDirectory}, found ${matches.length}`,
 		);
 	}
 	const workbench = matches[0];
 	assertRequiredMcpServers(workbench);
 	const extensionPath = canonicalExtensionPath(
-		nonEmptyString(env.TRUSTABLE_PI_EXTENSION_PATH, "extension path"),
+		nonEmptyString(env.TRUSTANT_PI_EXTENSION_PATH, "extension path"),
 	);
 	const managedMcp = readManagedMcpServers(workbench);
 	return {

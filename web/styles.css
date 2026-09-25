@@ -157,7 +157,7 @@ body {
 	display: flex;
 	flex-direction: column;
 	gap: 0.75rem;
-	/* WHY: the managed chat is often embedded in another Trustable page.
+	/* WHY: the managed chat is often embedded in another Trustant page.
 	   Keep transcript selection explicit so host styles cannot turn normal
 	   copy/paste into a drag-only or non-selectable surface. */
 	user-select: text;

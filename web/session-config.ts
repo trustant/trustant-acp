@@ -145,7 +145,7 @@ function currentSelectValue(
  * Apply deterministic managed defaults before the chat becomes ready.
  *
  * WHY: Codex `agent` and Claude `acceptEdits` still prompt for ordinary shell
- * commands. Trustable runs these agents inside its VM/pod isolation boundary,
+ * commands. Trustant runs these agents inside its VM/pod isolation boundary,
  * so managed sessions deliberately select their advertised no-prompt modes
  * while leaving the global auto-allow switch disabled for custom agents.
  */

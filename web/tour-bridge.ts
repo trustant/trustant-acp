@@ -16,10 +16,10 @@
  */
 
 /**
- * Spotlight-tour bridge for the embedding Trustable host.
+ * Spotlight-tour bridge for the embedding Trustant host.
  *
- * WHY: the Trustable workbench runs its guided tutorials from
- * `trustable.<domain>` while this UI is framed from `opencode.<domain>`. The
+ * WHY: the Trustant workbench runs its guided tutorials from
+ * `trustant.<domain>` while this UI is framed from `opencode.<domain>`. The
  * two are different origins, so the host cannot measure our controls or watch
  * our notebook state to decide when a tutorial step has actually completed.
  * While a tour is running the host asks us to report, and we post the viewport
@@ -34,7 +34,7 @@
 
 /** Messages the host sends us. */
 interface TourHostMessage {
-	source: "trustable-tour-host";
+	source: "trustant-tour-host";
 	type: "start" | "stop" | "scroll";
 	/** `scroll` only: the `data-tour` name to bring into view. */
 	target?: string;
@@ -72,7 +72,7 @@ export interface TourState {
 }
 
 export interface TourFrame {
-	source: "trustable-tour-frame";
+	source: "trustant-tour-frame";
 	type: "frame";
 	/**
 	 * Protocol revision. 1 reported a single rect per name; 2 reports every
@@ -91,7 +91,7 @@ function isHostMessage(data: unknown): data is TourHostMessage {
 	if (typeof data !== "object" || data === null) return false;
 	const msg = data as Partial<TourHostMessage>;
 	return (
-		msg.source === "trustable-tour-host" &&
+		msg.source === "trustant-tour-host" &&
 		(msg.type === "start" || msg.type === "stop" || msg.type === "scroll")
 	);
 }
@@ -169,7 +169,7 @@ export function collectState(root: ParentNode): TourState {
 
 export function buildFrame(root: ParentNode): TourFrame {
 	return {
-		source: "trustable-tour-frame",
+		source: "trustant-tour-frame",
 		type: "frame",
 		version: 2,
 		targets: collectTargets(root),

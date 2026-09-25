@@ -19,7 +19,7 @@
 
 # Pi CLI and core — exact upstream release. setup.sh verifies the five package
 # integrities recorded in pi.integrity before installing them as one lockstep
-# runtime. Trustable-specific stream protection lives in the managed extension.
+# runtime. Trustant-specific stream protection lives in the managed extension.
 @earendil-works/pi-ai@0.82.0
 @earendil-works/pi-tui@0.82.0
 @earendil-works/pi-agent-core@0.82.0

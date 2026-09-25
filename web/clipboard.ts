@@ -24,7 +24,7 @@ export interface ClipboardRuntime {
 /**
  * Copy text with a secure Clipboard API first and a user-gesture fallback.
  *
- * WHY: Trustable development is intentionally served from HTTP `*.nip.io`
+ * WHY: Trustant development is intentionally served from HTTP `*.nip.io`
  * hosts, where Safari and other browsers can deny `navigator.clipboard`.
  * Falling back after either an insecure context or a rejected modern write
  * keeps Copy functional without requiring HTTPS merely for local development.

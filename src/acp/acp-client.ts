@@ -76,7 +76,7 @@ export interface AgentConfig {
 		envVarName: string;
 	};
 	/**
-	 * Host-validated Pi launch contract for a Trustable-managed session.
+	 * Host-validated Pi launch contract for a Trustant-managed session.
 	 *
 	 * WHY: keeping policy paths out of browser/configured argv prevents an ACP
 	 * request from injecting arbitrary Pi flags or escaping the selected
@@ -115,12 +115,12 @@ export function buildPiSessionRequestMeta(
 		!pathIsWithin(config.piLaunch.workbench, workingDirectory)
 	) {
 		throw new Error(
-			`Trustable runtime blocked Pi session cwd outside the selected workbench: ${workingDirectory}`,
+			`Trustant runtime blocked Pi session cwd outside the selected workbench: ${workingDirectory}`,
 		);
 	}
 	return {
 		_meta: {
-			trustable: {
+			trustant: {
 				piLaunch: {
 					version: config.piLaunch?.version ?? 1,
 					extensions: {
@@ -258,9 +258,9 @@ export class AcpClient {
 		// and Claude receive only the explicit MCP session contract; inheriting
 		// the host paths would let ordinary agent shell commands bypass it.
 		for (const name of [
-			"TRUSTABLE_RUNTIME_CONFIG",
-			"TRUSTABLE_PI_EXTENSION_PATH",
-			"TRUSTABLE_MCP_CONFIG",
+			"TRUSTANT_RUNTIME_CONFIG",
+			"TRUSTANT_PI_EXTENSION_PATH",
+			"TRUSTANT_MCP_CONFIG",
 			"DATABASE_URI",
 			"MDB_MCP_CONNECTION_STRING",
 			"MONGODB_URI",

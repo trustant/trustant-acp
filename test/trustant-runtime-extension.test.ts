@@ -20,7 +20,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { describe, expect, it } from "vitest";
 import {
-	loadTrustableRuntimeManifest,
+	loadTrustantRuntimeManifest,
 	isManagedActionMutation,
 	ManagedSemanticCircuit,
 	MANAGED_REPEATED_STREAM_ERROR,
@@ -37,13 +37,13 @@ import {
 	managedShellCommandBlockReason,
 	managedToolResultFailed,
 	pathIsWithin,
-	readTrustableRuntimeStatus,
+	readTrustantRuntimeStatus,
 	recordManagedMcpBootstrapResult,
-	requestTrustableRedeploy,
-	trustableRuntimeSystemPrompt,
-} from "../extensions/trustable-runtime";
+	requestTrustantRedeploy,
+	trustantRuntimeSystemPrompt,
+} from "../extensions/trustant-runtime";
 
-describe("Trustable Pi runtime extension", () => {
+describe("Trustant Pi runtime extension", () => {
 	it("moves the provider repetition guard to upstream Pi's extension boundary", () => {
 		const phrase = Array.from(
 			{ length: 32 },
@@ -139,38 +139,38 @@ describe("Trustable Pi runtime extension", () => {
 			}),
 		);
 
-		const manifest = loadTrustableRuntimeManifest(nested, {
-			TRUSTABLE_MANAGED_RUNTIME: "1",
-			TRUSTABLE_RUNTIME_CONFIG: manifestPath,
+		const manifest = loadTrustantRuntimeManifest(nested, {
+			TRUSTANT_MANAGED_RUNTIME: "1",
+			TRUSTANT_RUNTIME_CONFIG: manifestPath,
 		});
 		expect(manifest.requiredMcpServers).toEqual(["mongodb", "openserverless"]);
 		expect(pathIsWithin(workbench, nested)).toBe(true);
 		expect(pathIsWithin(workbench, join(root, "other"))).toBe(false);
-		expect(trustableRuntimeSystemPrompt(manifest)).toContain(
+		expect(trustantRuntimeSystemPrompt(manifest)).toContain(
 			"service MCPs as discovery and read-only verification",
 		);
-		expect(trustableRuntimeSystemPrompt(manifest)).toContain(
+		expect(trustantRuntimeSystemPrompt(manifest)).toContain(
 			"Browser-visible application URL: http://vite.example.test",
 		);
-		expect(trustableRuntimeSystemPrompt(manifest)).toContain(
+		expect(trustantRuntimeSystemPrompt(manifest)).toContain(
 			"ops ide devel watcher is the sole owner",
 		);
-		expect(trustableRuntimeSystemPrompt(manifest)).toContain(
-			"call trustable_runtime_status",
+		expect(trustantRuntimeSystemPrompt(manifest)).toContain(
+			"call trustant_runtime_status",
 		);
-		expect(trustableRuntimeSystemPrompt(manifest)).toContain(
+		expect(trustantRuntimeSystemPrompt(manifest)).toContain(
 			"use opaque random session tokens with an expiry",
 		);
-		expect(trustableRuntimeSystemPrompt(manifest)).toContain(
+		expect(trustantRuntimeSystemPrompt(manifest)).toContain(
 			"OpenServerless auth_setup tool once",
 		);
-		expect(trustableRuntimeSystemPrompt(manifest)).toContain(
+		expect(trustantRuntimeSystemPrompt(manifest)).toContain(
 			"complete the mandatory MCP bootstrap",
 		);
-		expect(trustableRuntimeSystemPrompt(manifest)).toContain(
+		expect(trustantRuntimeSystemPrompt(manifest)).toContain(
 			"Only the user may change application environment values",
 		);
-		const status = readTrustableRuntimeStatus(manifest, 2);
+		const status = readTrustantRuntimeStatus(manifest, 2);
 		expect(status.lines.join("\n")).toContain(
 			"deployed packages/v1/projects.zip",
 		);
@@ -344,8 +344,8 @@ describe("Trustable Pi runtime extension", () => {
 
 	it("fails closed when the managed marker or manifest does not match", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runtime-extension-"));
-		expect(() => loadTrustableRuntimeManifest(root, {})).toThrow(
-			"requires TRUSTABLE_MANAGED_RUNTIME=1",
+		expect(() => loadTrustantRuntimeManifest(root, {})).toThrow(
+			"requires TRUSTANT_MANAGED_RUNTIME=1",
 		);
 	});
 
@@ -543,12 +543,12 @@ describe("Trustable Pi runtime extension", () => {
 		).toBe(false);
 		expect(
 			managedRedeployVerificationBlockReason(
-				"trustable_runtime_status",
+				"trustant_runtime_status",
 				{},
 				true,
 				["openserverless"],
 			),
-		).toContain("trustable_runtime_redeploy");
+		).toContain("trustant_runtime_redeploy");
 		expect(
 			managedRedeployVerificationBlockReason(
 				"edit",
@@ -559,7 +559,7 @@ describe("Trustable Pi runtime extension", () => {
 		).toBeUndefined();
 		expect(
 			managedRedeployVerificationBlockReason(
-				"trustable_runtime_redeploy",
+				"trustant_runtime_redeploy",
 				{},
 				true,
 				["openserverless"],
@@ -567,7 +567,7 @@ describe("Trustable Pi runtime extension", () => {
 		).toBeUndefined();
 
 		let requestedUrl = "";
-		const result = await requestTrustableRedeploy(
+		const result = await requestTrustantRedeploy(
 			"example",
 			async (input) => {
 				requestedUrl = String(input);
@@ -593,7 +593,7 @@ describe("Trustable Pi runtime extension", () => {
 			actionList: "/guest/v1/users\n/guest/v1/login",
 		});
 		await expect(
-			requestTrustableRedeploy("example", async () => {
+			requestTrustantRedeploy("example", async () => {
 				return new Response(
 					"event: error\ndata: ops ide deploy failed\n\n",
 					{ status: 200 },
@@ -601,7 +601,7 @@ describe("Trustable Pi runtime extension", () => {
 			}),
 		).rejects.toThrow("ops ide deploy failed");
 		await expect(
-			requestTrustableRedeploy(
+			requestTrustantRedeploy(
 				"example",
 				async (_input, init) => {
 					return {

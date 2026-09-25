@@ -26,7 +26,7 @@ describe("managed model choices", () => {
 	it.each([
 		["local", "local/coder"],
 		["ollama", "ollama/qwen3-coder"],
-		["trustable", "trustable/qwen3-coder-next"],
+		["trustant", "trustant/qwen3-coder-next"],
 	])(
 		"keeps only models from the active %s provider",
 		(_provider, current) => {
@@ -41,8 +41,8 @@ describe("managed model choices", () => {
 					{ value: "local/coder", name: "local/Coder" },
 					{ value: "ollama/qwen3-coder", name: "ollama/Qwen3 Coder" },
 					{
-						value: "trustable/qwen3-coder-next",
-						name: "trustable/Qwen3 Coder Next",
+						value: "trustant/qwen3-coder-next",
+						name: "trustant/Qwen3 Coder Next",
 					},
 					{ value: "anthropic/claude", name: "anthropic/Claude" },
 				],
@@ -71,9 +71,9 @@ describe("managed model choices", () => {
 			id: "model",
 			category: "model",
 			name: "Model",
-			currentValue: "trustable/qwen",
+			currentValue: "trustant/qwen",
 			options: [
-				{ value: "trustable/qwen", name: "Trustable Qwen" },
+				{ value: "trustant/qwen", name: "Trustant Qwen" },
 				{ value: "openai/gpt-5", name: "OpenAI GPT-5" },
 			],
 		};
@@ -82,16 +82,16 @@ describe("managed model choices", () => {
 			modelChoicesForAgent(option, "pi", true).map(
 				(choice) => choice.value,
 			),
-		).toEqual(["trustable/qwen"]);
+		).toEqual(["trustant/qwen"]);
 		expect(
 			modelChoicesForAgent(option, "codex", null).map(
 				(choice) => choice.value,
 			),
-		).toEqual(["trustable/qwen", "openai/gpt-5"]);
+		).toEqual(["trustant/qwen", "openai/gpt-5"]);
 		expect(
 			modelChoicesForAgent(option, "custom", false).map(
 				(choice) => choice.value,
 			),
-		).toEqual(["trustable/qwen", "openai/gpt-5"]);
+		).toEqual(["trustant/qwen", "openai/gpt-5"]);
 	});
 });

@@ -234,6 +234,6 @@ describe("buildFrame", () => {
 	it("stamps the protocol version so the host can spot an old bridge", () => {
 		const frame = buildFrame(targetRoot([]));
 		expect(frame.version).toBe(2);
-		expect(frame.source).toBe("trustable-tour-frame");
+		expect(frame.source).toBe("trustant-tour-frame");
 	});
 });

@@ -88,7 +88,7 @@ export async function readLocalTemplate(
  * Write the working copy and stage it.
  *
  * Staging is best-effort and deliberately stops short of committing: the
- * application's own save in Trustable already runs `git add -A` followed by a
+ * application's own save in Trustant already runs `git add -A` followed by a
  * commit and push, so the template rides along with the user's other changes
  * instead of producing commits they did not ask for. A workbench that is not a
  * git checkout still gets the file, reported as `staged: false`.

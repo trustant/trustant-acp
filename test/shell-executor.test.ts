@@ -72,19 +72,19 @@ describe("server shell executor", () => {
 	});
 
 	it("does not inherit credential-named host variables", async () => {
-		const previous = process.env.TRUSTABLE_SHELL_TEST_SECRET;
-		process.env.TRUSTABLE_SHELL_TEST_SECRET = "must-not-cross";
+		const previous = process.env.TRUSTANT_SHELL_TEST_SECRET;
+		process.env.TRUSTANT_SHELL_TEST_SECRET = "must-not-cross";
 		try {
 			const result = await executeShellCommand({
-				command: 'printf "%s" "$TRUSTABLE_SHELL_TEST_SECRET"',
+				command: 'printf "%s" "$TRUSTANT_SHELL_TEST_SECRET"',
 				cwd: process.cwd(),
 			});
 			expect(result.stdout).toBe("");
 		} finally {
 			if (previous === undefined) {
-				delete process.env.TRUSTABLE_SHELL_TEST_SECRET;
+				delete process.env.TRUSTANT_SHELL_TEST_SECRET;
 			} else {
-				process.env.TRUSTABLE_SHELL_TEST_SECRET = previous;
+				process.env.TRUSTANT_SHELL_TEST_SECRET = previous;
 			}
 		}
 	});
