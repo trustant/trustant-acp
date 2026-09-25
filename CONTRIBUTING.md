@@ -13,7 +13,7 @@ To request an agreement, contact **info@nuvolaris.io** before opening a pull
 request.
 
 See the full contribution guide, including the license-header workflow, in the
-[trustable-app](https://github.com/trustable-ai/trustable-app/blob/main/CONTRIBUTING.md)
+[trustant](https://github.com/trustant/trustant/blob/main/CONTRIBUTING.md)
 repository.
 
 License headers in this repository are enforced from *this* directory:
