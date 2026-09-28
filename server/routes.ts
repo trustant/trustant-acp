@@ -90,6 +90,7 @@ import type {
 	NotebookDocumentResponse,
 	NotebookMutationResponse,
 	NotebookSessionResponse,
+	PiThinkingRequest,
 } from "./protocol";
 
 export interface RouteContext {
@@ -464,6 +465,13 @@ export const routes = {
 		});
 		return { ok: true };
 	},
+
+	"POST /api/pi/thinking": async (
+		ctx: RouteContext,
+		body: PiThinkingRequest,
+	): Promise<{ think: string }> => ({
+		think: ctx.host.setPiThinking(String(body.think ?? "")),
+	}),
 
 	// ---- codex login (device-code flow) -----------------------------------
 

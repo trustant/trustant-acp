@@ -53,6 +53,11 @@ export interface AgentsResponse {
 	projectDir: string;
 }
 
+/** POST /api/pi/thinking { think } → store the toolbar Thinking value for Pi. */
+export interface PiThinkingRequest {
+	think: string;
+}
+
 /**
  * GET /api/directory → current default cwd.
  * POST /api/directory { dir } → change the default cwd (validated, absolute path

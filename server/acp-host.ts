@@ -65,6 +65,7 @@ export function buildRuntime(
 export function buildAgentConfig(
 	agent: ConfigAgent,
 	workingDirectory: string,
+	thinkFile?: string,
 ): AgentConfig {
 	const env: Record<string, string> = {};
 	for (const { key, value } of agent.env) {
@@ -108,6 +109,9 @@ export function buildAgentConfig(
 				TRUSTANT_MANAGED_RUNTIME: "1",
 				TRUSTANT_RUNTIME_CONFIG: managed.runtimeConfigPath,
 				TRUSTANT_PI_EXTENSION_PATH: managed.extensionPath,
+				// Read by the extension before every provider request, so the
+				// toolbar Thinking selector applies without restarting Pi.
+				...(thinkFile ? { TRUSTANT_THINK_FILE: thinkFile } : {}),
 			};
 		}
 	}

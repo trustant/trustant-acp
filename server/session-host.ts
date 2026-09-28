@@ -35,8 +35,14 @@ import {
 } from "./config-store";
 import { buildRuntime, buildAgentConfig } from "./acp-host";
 import type { WsEvent } from "./protocol";
-import { resolve } from "node:path";
+import { mkdtempSync, renameSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { redactSensitiveValue } from "./redaction";
+import {
+	TRUSTANT_THINKING_VALUES,
+	type TrustantThinking,
+} from "../extensions/trustant-runtime";
 
 /** Sink for server→client events (the WS broadcast). */
 export type EventSink = (event: WsEvent) => void;
@@ -52,6 +58,8 @@ export class SessionHost {
 	 * `server.projectDir`. Absolute, already validated by the caller.
 	 */
 	private projectDirOverride?: string;
+	/** Per-process file carrying the toolbar Thinking value to the Pi extension. */
+	private thinkFile?: string;
 
 	constructor(
 		private config: StandaloneConfig,
@@ -110,7 +118,11 @@ export class SessionHost {
 		if (!agent) throw new Error(`Unknown agent "${agentId}"`);
 
 		const workingDir = cwd ?? this.projectDir();
-		const agentConfig = buildAgentConfig(agent, workingDir);
+		const agentConfig = buildAgentConfig(
+			agent,
+			workingDir,
+			this.piThinkingFile(),
+		);
 		this.redactionSecrets.set(
 			agentId,
 			agentConfig.redactionSecrets ?? [],
@@ -130,6 +142,32 @@ export class SessionHost {
 		);
 		const client = this.getClient(agentId);
 		return client.initialize(agentConfig);
+	}
+
+	/** Lazily create the private directory holding the Thinking state file. */
+	private piThinkingFile(): string {
+		if (!this.thinkFile) {
+			const dir = mkdtempSync(join(tmpdir(), "truacp-"));
+			this.thinkFile = join(dir, "pi-thinking.json");
+		}
+		return this.thinkFile;
+	}
+
+	/**
+	 * Store the toolbar Thinking value. The managed Pi extension re-reads the
+	 * file before each provider request; see extensions/trustant-runtime.ts.
+	 */
+	setPiThinking(value: string): TrustantThinking {
+		if (!(TRUSTANT_THINKING_VALUES as readonly string[]).includes(value)) {
+			throw new Error(
+				`Bad request: think must be one of ${TRUSTANT_THINKING_VALUES.join(", ")}`,
+			);
+		}
+		const file = this.piThinkingFile();
+		// Rename keeps a concurrent read from ever seeing a half-written file.
+		writeFileSync(`${file}.tmp`, JSON.stringify({ think: value }));
+		renameSync(`${file}.tmp`, file);
+		return value as TrustantThinking;
 	}
 
 	/** Redact host-known MCP credentials before REST output is persisted. */

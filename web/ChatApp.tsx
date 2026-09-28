@@ -50,7 +50,12 @@ import {
 	managedReasoningConfig,
 	readReasoningPreference,
 	writeReasoningPreference,
+	readThinkingPreference,
+	writeThinkingPreference,
+	isPiThinking,
+	PI_THINKING_VALUES,
 	type ManagedReasoningEffort,
+	type PiThinking,
 } from "./session-config";
 import type {
 	NotebookIndexEntry,
@@ -224,6 +229,9 @@ export function ChatApp(): React.ReactElement {
 	);
 	const [input, setInput] = useState("");
 	const [piManaged, setPiManaged] = useState<boolean | null>(null);
+	const [piThinking, setPiThinkingState] = useState<PiThinking>(() =>
+		readThinkingPreference(browserPreferenceStorage()),
+	);
 	const [historyOpen, setHistoryOpen] = useState(false);
 	const [historyLoading, setHistoryLoading] = useState(false);
 	const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -643,6 +651,13 @@ export function ChatApp(): React.ReactElement {
 					id,
 					result.reasoningEffort,
 					browserPreferenceStorage(),
+				);
+			}
+			if (id === "pi") {
+				// The server state file starts empty on every TruACP start, so
+				// re-send the stored choice whenever a Pi session becomes ready.
+				await transport.setPiThinking(
+					readThinkingPreference(browserPreferenceStorage()),
 				);
 			}
 			return result.configOptions;
@@ -1972,6 +1987,22 @@ export function ChatApp(): React.ReactElement {
 		[agentId, reasoningConfig],
 	);
 
+	/** Store the Thinking choice; Pi applies it on its next provider request. */
+	const setPiThinking = useCallback(async (value: string) => {
+		if (!isPiThinking(value)) return;
+		try {
+			await transport.setPiThinking(value);
+			writeThinkingPreference(value, browserPreferenceStorage());
+			setPiThinkingState(value);
+		} catch (e) {
+			setError(String((e as Error).message ?? e));
+		}
+	}, []);
+
+	// WHY: managed Pi gets the Thinking selector instead of High/Extra high;
+	// its `true` value keeps whatever effort Pi computed from that baseline.
+	const showPiThinking = ready && agentId === "pi" && piManaged === true;
+
 	return (
 		<div className="app">
 			<header className="topbar">
@@ -2011,7 +2042,23 @@ export function ChatApp(): React.ReactElement {
 						))}
 					</select>
 				)}
-				{ready && reasoningConfig && (
+				{showPiThinking && (
+					<select
+						className="reasoning-select"
+						title="Thinking (reasoning_effort sent to the model)"
+						aria-label="Thinking"
+						value={piThinking}
+						disabled={busy || running}
+						onChange={(e) => void setPiThinking(e.target.value)}
+					>
+						{PI_THINKING_VALUES.map((value) => (
+							<option key={value} value={value}>
+								Thinking: {value}
+							</option>
+						))}
+					</select>
+				)}
+				{ready && reasoningConfig && !showPiThinking && (
 					<select
 						className="reasoning-select"
 						title="Reasoning effort"
