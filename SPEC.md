@@ -743,6 +743,32 @@ sessions restore the last valid effort separately for each agent; values never
 leak between Pi, Codex, Claude, or a custom agent. Like other configuration
 controls, the selector is disabled during an active turn.
 
+**Pi Thinking selector (managed runtime).** For Pi under the Trustant managed
+runtime (`hello.managed`), the header shows a **Thinking** selector instead of
+the Reasoning effort selector, with the values `none`, `true`, `false`, `low`,
+`medium`, `high`, defaulting to `true`. The managed `high` reasoning default is
+still applied to Pi's `thought_level` at session start, so `true` preserves the
+existing behaviour. The value is persisted per browser
+(`truacp.pi-thinking.v1`), sent with `POST /api/pi/thinking { think }` whenever a
+Pi session becomes ready and on every change, and rejected with 400 unless it is
+one of the six values. The server writes it to a per-process state file whose
+path reaches Pi as `TRUSTANT_THINK_FILE`. The managed extension re-reads that
+file in `before_provider_request`, so a change applies to the next provider
+call without restarting Pi, and it rewrites only `reasoning_effort` in
+chat-completions payloads:
+
+| Thinking | `reasoning_effort` |
+|---|---|
+| `none` | removed, never sent (even when Pi computed one) |
+| `true` (default, also for a missing/invalid file) | left exactly as Pi computed it |
+| `false` | `"none"` |
+| `low` / `medium` / `high` | that value |
+
+`think` is never sent: Pi always uses the OpenAI chat-completions API, and
+Ollama's `/v1` ignores `think`, whereas `reasoning_effort` is honoured. The
+selector exists because GLM on Ollama intermittently returns its tool calls as
+raw `<arg_key>…</tool_call>` text while thinking is on; `false` avoids it.
+
 The owned Pi adapter derives its `thought_level` choices from Pi's active model
 metadata rather than publishing a fixed list. A model with `reasoning !== true`
 offers only `off`. A reasoning model supports the standard levels through
@@ -885,6 +911,9 @@ rejected instead of falling back to the default directory.
   advertised subset of `high`/`xhigh`, persists independently per agent, and
   sends the real adapter config id. Change model and confirm the choices are
   reconciled without a silent downgrade.
+- For managed Pi, verify the Thinking selector replaces the reasoning selector,
+  defaults to `true`, survives a reload, and that each value produces the
+  `reasoning_effort` in the table above on the next provider request.
 - For Codex, verify session readiness applies `agent-full-access`; for Claude,
   verify it applies `bypassPermissions`. Reading files, running ordinary shell
   commands, and modifying the workbench must not create permission prompts.

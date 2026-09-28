@@ -402,6 +402,11 @@ export class AcpTransport {
 		await this.call("/api/pi/config/set", cfg);
 	}
 
+	/** Store the managed Pi Thinking value (applied on the next provider request). */
+	async setPiThinking(think: string): Promise<void> {
+		await this.call("/api/pi/thinking", { think });
+	}
+
 	/** Run `codex login status`. */
 	async codexLoginStatus(): Promise<{ loggedIn: boolean; detail: string }> {
 		return this.call("/api/codex/login-status");

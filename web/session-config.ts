@@ -262,3 +262,47 @@ export function writeReasoningPreference(
 		// still uses the selected value; only cross-reload restoration is lost.
 	}
 }
+
+/**
+ * Values of the managed Pi Thinking selector. Kept in step with
+ * TRUSTANT_THINKING_VALUES in extensions/trustant-runtime.ts, which the browser
+ * bundle cannot import (it depends on node:fs).
+ */
+export const PI_THINKING_VALUES = [
+	"none",
+	"true",
+	"false",
+	"low",
+	"medium",
+	"high",
+] as const;
+export type PiThinking = (typeof PI_THINKING_VALUES)[number];
+export const DEFAULT_PI_THINKING: PiThinking = "true";
+const PI_THINKING_STORAGE_KEY = "truacp.pi-thinking.v1";
+
+export function isPiThinking(value: unknown): value is PiThinking {
+	return (PI_THINKING_VALUES as readonly unknown[]).includes(value);
+}
+
+/** Read the per-browser Thinking choice; anything unknown means the default. */
+export function readThinkingPreference(
+	storage: ConfigPreferenceStorage | null,
+): PiThinking {
+	try {
+		const stored = storage?.getItem(PI_THINKING_STORAGE_KEY) ?? null;
+		return isPiThinking(stored) ? stored : DEFAULT_PI_THINKING;
+	} catch {
+		return DEFAULT_PI_THINKING;
+	}
+}
+
+export function writeThinkingPreference(
+	value: PiThinking,
+	storage: ConfigPreferenceStorage | null,
+): void {
+	try {
+		storage?.setItem(PI_THINKING_STORAGE_KEY, value);
+	} catch {
+		// Same policy as the reasoning preference: only restoration is lost.
+	}
+}

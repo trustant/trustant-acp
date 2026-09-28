@@ -166,6 +166,10 @@ interface TrustantExtensionApi {
 		) => Promise<{ block: true; reason: string } | undefined>,
 	): void;
 	on(
+		event: "before_provider_request",
+		handler: (event: BeforeProviderRequestEvent) => unknown,
+	): void;
+	on(
 		event: "tool_result",
 		handler: (
 			event: ToolResultEvent,
@@ -1270,6 +1274,72 @@ function authRedisBindingBlockReason(
 	return "Trustant blocked piecemeal Redis binding for authentication endpoints. Create the complete endpoint set first, then call the discovered OpenServerless auth_setup tool once with all token, protected/session, and logout endpoints.";
 }
 
+interface BeforeProviderRequestEvent {
+	payload: unknown;
+}
+
+/** Toolbar Thinking values; the server writes one of these to TRUSTANT_THINK_FILE. */
+export const TRUSTANT_THINKING_VALUES = [
+	"none",
+	"true",
+	"false",
+	"low",
+	"medium",
+	"high",
+] as const;
+export type TrustantThinking = (typeof TRUSTANT_THINKING_VALUES)[number];
+export const DEFAULT_TRUSTANT_THINKING: TrustantThinking = "true";
+
+/**
+ * Read the Thinking value chosen in the TruACP toolbar. Re-read on every
+ * request so a toolbar change applies to the next provider call without a Pi
+ * restart. Missing, unreadable, or invalid state means the default.
+ */
+export function readTrustantThinking(
+	path: string | undefined = process.env.TRUSTANT_THINK_FILE,
+): TrustantThinking {
+	if (!path) return DEFAULT_TRUSTANT_THINKING;
+	try {
+		const raw = JSON.parse(readFileSync(path, "utf8")) as { think?: unknown };
+		return (TRUSTANT_THINKING_VALUES as readonly unknown[]).includes(raw.think)
+			? (raw.think as TrustantThinking)
+			: DEFAULT_TRUSTANT_THINKING;
+	} catch {
+		return DEFAULT_TRUSTANT_THINKING;
+	}
+}
+
+/**
+ * Apply the Thinking value to an OpenAI chat-completions payload.
+ *
+ * WHY: Pi talks the OpenAI API to every provider, where only the standard
+ * `reasoning_effort` field is honoured (Ollama's `/v1` ignores `think`). GLM on
+ * Ollama intermittently returns tool calls as raw text while thinking is on, so
+ * the user needs a way to send `reasoning_effort: "none"`. `true` keeps what Pi
+ * computed; `none` guarantees the field is absent. Returns undefined when the
+ * payload is left untouched.
+ */
+export function applyTrustantThinking(
+	payload: unknown,
+	thinking: TrustantThinking,
+): Record<string, unknown> | undefined {
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+		return undefined;
+	}
+	const record = payload as Record<string, unknown>;
+	// Only chat-completions payloads carry `messages`; leave other APIs alone.
+	if (!Array.isArray(record.messages)) return undefined;
+	if (thinking === "true") return undefined;
+	const next = { ...record };
+	if (thinking === "none") {
+		if (!("reasoning_effort" in next)) return undefined;
+		delete next.reasoning_effort;
+		return next;
+	}
+	next.reasoning_effort = thinking === "false" ? "none" : thinking;
+	return next;
+}
+
 export default function trustantRuntimeExtension(
 	pi: TrustantExtensionApi,
 ): void {
@@ -1359,6 +1429,10 @@ export default function trustantRuntimeExtension(
 			};
 		},
 	});
+
+	pi.on("before_provider_request", (event) =>
+		applyTrustantThinking(event.payload, readTrustantThinking()),
+	);
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		const current = loadTrustantRuntimeManifest(ctx.cwd);
