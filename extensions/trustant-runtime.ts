@@ -23,7 +23,8 @@
  * on trustant-acp source files so the packaged VM/pod artifact is complete.
  */
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface TrustantRuntimeWorkbench {
 	app: string;
@@ -543,6 +544,9 @@ export function trustantRuntimeSystemPrompt(
 		"  Application .env and .env.production files are immutable agent boundaries. Never read, create, edit, import, synchronize, or regenerate them. Only the user may change application environment values through the Trustant configuration interface; report a missing value without attempting to create it.",
 		"  For authenticated application pages, create all endpoints first and call the OpenServerless auth_setup tool once with the complete token, protected/session, and logout endpoint sets. It atomically adds Redis wiring; use opaque random session tokens with an expiry, build every key from ctx.REDIS_PREFIX, validate the Redis session on every protected request, and delete it on logout. Never use JWT or an application secret as the session foundation.",
 		"  Never create or edit generated packages/<package>/<action>/__main__.py wrappers or packages/**/*.zip artifacts. Use the exposed OpenServerless action and connector tools; never invent commands such as ops ide action invoke.",
+		"  Never create a Python virtualenv or environment (venv, virtualenv, uv, poetry, pipenv, conda), never install packages, and never create or edit requirements*.txt or pyproject.toml. Python actions may import only the standard library and these runtime libraries: " +
+			pythonRuntimeLibraries().join(", ") +
+			" (import names: bs4, yaml, dateutil, Crypto, dotenv, psycopg). Anything else (e.g. JWT, Pillow, scikit-learn) must be implemented in code; never add a requirement.",
 		"  Execute available bounded checks yourself instead of delegating shell commands to the user.",
 		"</trustant_runtime>",
 	].join("\n");
@@ -747,6 +751,140 @@ export function managedServiceMcpMutationBlockReason(
 	return `Trustant blocked the mutating ${server} MCP tool '${invocation.tool}' during application generation. Put schema and seed changes in an idempotent setup action and application writes in OpenServerless actions; service MCPs remain available for read-only verification.`;
 }
 
+/**
+ * The OpenServerless Python 3.12 action runtime's requirements.txt, vendored
+ * verbatim beside this file (setup.sh installs both together). Source — refresh
+ * this copy and mcp/requirements.txt together:
+ * https://raw.githubusercontent.com/trustable-ai/openserverless-runtimes/refs/heads/0.9.0/runtime/python/v3.12/requirements.txt
+ */
+export const PYTHON_RUNTIME_REQUIREMENTS_FILE = "requirements.txt";
+
+/**
+ * PEP 503 names of every pinned distribution in a pip-compile output. Direct
+ * and transitive entries are all importable in the runtime, so all count.
+ */
+export function parsePythonRuntimeRequirements(text: string): string[] {
+	const names = new Set<string>();
+	for (const raw of text.split("\n")) {
+		const line = raw.trim();
+		if (!line || line.startsWith("#") || line.startsWith("-")) {
+			continue;
+		}
+		const name = normalizePythonRequirement(line);
+		if (name) {
+			names.add(name);
+		}
+	}
+	return [...names].sort();
+}
+
+function extensionDirectory(): string {
+	// WHY: Pi loads this file as .ts (import.meta.url is set), while the TruACP
+	// server bundles it as CJS for a few constants and never calls this.
+	const url = (import.meta as { url?: string }).url;
+	if (typeof url === "string" && url.startsWith("file:")) {
+		return dirname(fileURLToPath(url));
+	}
+	if (typeof __dirname === "string") {
+		return __dirname;
+	}
+	throw new Error("Trustant cannot locate the runtime extension directory.");
+}
+
+let pythonRuntimeLibrariesCache: readonly string[] | undefined;
+
+/**
+ * Libraries the action runtime ships, read once from the vendored file. A
+ * missing or empty file throws: an unguarded "everything allowed" fallback
+ * would silently reintroduce the problem this policy exists for.
+ */
+export function pythonRuntimeLibraries(
+	path = join(extensionDirectory(), PYTHON_RUNTIME_REQUIREMENTS_FILE),
+): readonly string[] {
+	if (pythonRuntimeLibrariesCache) {
+		return pythonRuntimeLibrariesCache;
+	}
+	const libraries = parsePythonRuntimeRequirements(readFileSync(path, "utf8"));
+	if (libraries.length === 0) {
+		throw new Error(`Trustant Python runtime requirements are empty: ${path}`);
+	}
+	pythonRuntimeLibrariesCache = libraries;
+	return libraries;
+}
+
+/** PEP 503 name of a requirement spec, without extras, markers or version. */
+export function normalizePythonRequirement(spec: string): string {
+	const name = spec.trim().match(/^[A-Za-z0-9][A-Za-z0-9._-]*/)?.[0] ?? "";
+	return name.toLowerCase().replace(/[-_.]+/g, "-");
+}
+
+const PYTHON_ENVIRONMENT_ADVICE =
+	"Actions run on the OpenServerless Python runtime, which already ships every allowed library; use only those (see the trustant_runtime system prompt) and implement anything else in code with the standard library.";
+
+const PYTHON_ENVIRONMENT_COMMAND =
+	/(?:^|[;&|(]\s*)(?:sudo\s+)?(?:(?:python3?(?:\.\d+)?|py)\s+-m\s+(?:venv|virtualenv|pip\s+install)\b|virtualenv\b|uv\s+(?:venv|sync|add|pip|init)\b|pip3?\s+install\b|poetry\b|pipenv\b|pdm\b|(?:conda|mamba|micromamba)\s+(?:create|install|env)\b)/i;
+
+const PYTHON_ENVIRONMENT_FILE =
+	/(?:^|\/)(?:requirements[^/]*\.txt|pyproject\.toml|Pipfile(?:\.lock)?|setup\.py|setup\.cfg|poetry\.lock|uv\.lock)$/;
+
+const PYTHON_ENVIRONMENT_DIR = /(?:^|\/)(?:\.venv|venv|site-packages)(?:\/|$)/;
+
+/**
+ * Forbid local Python environments and libraries outside the action runtime.
+ *
+ * WHY: Pi repeatedly created virtualenvs and requirements files despite the
+ * AGENTS.md rule. They are never used at runtime (actions build server-side),
+ * and a library the runtime does not ship fails only after deploy.
+ */
+export function managedPythonEnvironmentBlockReason(
+	toolName: string,
+	input: Record<string, unknown>,
+	knownServers: string[] = [],
+): string | undefined {
+	if (toolName === "bash" || toolName === "shell") {
+		const command = input.command;
+		if (typeof command !== "string") {
+			return undefined;
+		}
+		if (PYTHON_ENVIRONMENT_COMMAND.test(command)) {
+			return `Trustant blocked creating a Python environment or installing packages. Never create a virtualenv or install libraries. ${PYTHON_ENVIRONMENT_ADVICE}`;
+		}
+		if (
+			/(?:>{1,2}|\btee\b|\bcp\b|\bmv\b|\btouch\b|\bmkdir\b)[^\n;&|]*(?:requirements[^\s/]*\.txt|(?:^|[\s/])\.?venv(?:\/|\s|$))/i.test(
+				command,
+			)
+		) {
+			return `Trustant blocked writing a requirements file or virtualenv directory. ${PYTHON_ENVIRONMENT_ADVICE}`;
+		}
+		return undefined;
+	}
+	if (toolName === "write" || toolName === "edit") {
+		const path = input.path;
+		if (
+			typeof path === "string" &&
+			(PYTHON_ENVIRONMENT_FILE.test(path) || PYTHON_ENVIRONMENT_DIR.test(path))
+		) {
+			return `Trustant blocked a write to Python dependency metadata or a virtualenv (${path}). ${PYTHON_ENVIRONMENT_ADVICE}`;
+		}
+		return undefined;
+	}
+	const invocation = managedMcpInvocation(toolName, input, knownServers);
+	if (
+		invocation?.mode !== "call" ||
+		invocation.server !== "openserverless" ||
+		invocation.tool !== "action_requirements"
+	) {
+		return undefined;
+	}
+	const library = invocation.args.library;
+	const name =
+		typeof library === "string" ? normalizePythonRequirement(library) : "";
+	if (name && pythonRuntimeLibraries().includes(name)) {
+		return undefined;
+	}
+	return `Trustant blocked adding the Python library '${String(library ?? "")}': it is not shipped by the action runtime and new requirements are not allowed. ${PYTHON_ENVIRONMENT_ADVICE}`;
+}
+
 export function readTrustantRuntimeStatus(
 	workbench: TrustantRuntimeWorkbench,
 	requestedLines = 80,
@@ -819,7 +957,7 @@ export function managedShellCommandBlockReason(
 			command,
 		)
 	) {
-		return "Trustant blocked an ad-hoc dependency installation. Declare action dependencies through the OpenServerless action requirements tool or project package metadata; do not mutate the managed VM.";
+		return "Trustant blocked an ad-hoc dependency installation. Frontend dependencies belong in package.json; Python actions use only the libraries the action runtime ships. Do not mutate the managed VM.";
 	}
 	if (
 		/(?:generate_wrappers?\.py|__main__\.py)/i.test(command) ||
@@ -1346,6 +1484,7 @@ export default function trustantRuntimeExtension(
 	// Throwing during extension load is deliberate: managed Pi must never fall
 	// back to an unguarded session when the host contract is unavailable.
 	const manifest = loadTrustantRuntimeManifest();
+	pythonRuntimeLibraries();
 	let checkerRanSinceMutation = false;
 	let reactValidationRequired = false;
 	let redeployRequired = false;
@@ -1537,6 +1676,15 @@ export default function trustantRuntimeExtension(
 			);
 		if (serviceMutationBlockReason) {
 			return { block: true, reason: serviceMutationBlockReason };
+		}
+		const pythonEnvironmentBlockReason =
+			managedPythonEnvironmentBlockReason(
+				event.toolName,
+				event.input,
+				current.requiredMcpServers,
+			);
+		if (pythonEnvironmentBlockReason) {
+			return { block: true, reason: pythonEnvironmentBlockReason };
 		}
 		const authBlockReason = authRedisBindingBlockReason(invocation);
 		if (authBlockReason) {

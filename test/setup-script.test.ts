@@ -47,6 +47,9 @@ describe("setup.sh Pi runtime sources", () => {
 		expect(setup).toContain(
 			'"$SCRIPT_DIR/extensions/trustant-runtime.ts"',
 		);
+		expect(setup).toContain(
+			'cp "$TRUSTANT_REQUIREMENTS_SOURCE" "$LIB_DIR/extensions/requirements.txt"',
+		);
 		expect(setup).toContain('INTEGRITY_FILE="$SCRIPT_DIR/pi.integrity"');
 		expect(setup).toContain('npm view "$spec" dist.integrity');
 		expect(setup).toContain(

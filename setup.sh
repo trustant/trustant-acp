@@ -31,7 +31,7 @@
 # SELF-CONTAINED: this script needs no other file from the repo. Given just
 #
 #     setup.sh + pi.version + pi.integrity + dist-bin/truacp.cjs
-#     + pi-acp-package.tgz + extensions/trustant-runtime.ts
+#     + pi-acp-package.tgz + extensions/trustant-runtime.ts + extensions/requirements.txt
 #
 # it installs a complete, working truacp into ~/.local/bin — no package.json, no
 # node_modules, no secondary installer, no network beyond npm for the agents.
@@ -525,6 +525,14 @@ cp "$BUNDLE" "$LIB_DIR/truacp.cjs"
 # the bundle keeps VM and image runtimes identical and makes a missing policy
 # artifact a setup failure rather than an unguarded fallback.
 cp "$TRUSTANT_EXTENSION_SOURCE" "$LIB_DIR/extensions/trustant-runtime.ts"
+# The extension reads the action runtime's Python library list from this file
+# beside it; without it managed Pi refuses to start.
+TRUSTANT_REQUIREMENTS_SOURCE="$(dirname "$TRUSTANT_EXTENSION_SOURCE")/requirements.txt"
+if [ ! -f "$TRUSTANT_REQUIREMENTS_SOURCE" ]; then
+	echo "✗ Trustant Python runtime requirements.txt is missing." >&2
+	exit 1
+fi
+cp "$TRUSTANT_REQUIREMENTS_SOURCE" "$LIB_DIR/extensions/requirements.txt"
 
 # The launcher is a portable shell script, not a compiled binary: `node` is
 # resolved from PATH at run time, so the same bytes work on any architecture.
@@ -542,5 +550,6 @@ done
 echo "✓ Installed:"
 echo "    $LIB_DIR/truacp.cjs"
 echo "    $LIB_DIR/extensions/trustant-runtime.ts"
+echo "    $LIB_DIR/extensions/requirements.txt"
 echo "    $BIN_DIR/truacp"
 echo "    $BIN_DIR/trustant-acp"
