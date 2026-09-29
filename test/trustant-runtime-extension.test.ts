@@ -35,8 +35,12 @@ import {
 	managedSecretAccessBlockReason,
 	managedServiceMcpMutationBlockReason,
 	managedShellCommandBlockReason,
+	managedPythonEnvironmentBlockReason,
 	managedToolResultFailed,
+	normalizePythonRequirement,
+	parsePythonRuntimeRequirements,
 	pathIsWithin,
+	pythonRuntimeLibraries,
 	readTrustantRuntimeStatus,
 	recordManagedMcpBootstrapResult,
 	requestTrustantRedeploy,
@@ -750,5 +754,96 @@ describe("Trustant Pi runtime extension", () => {
 				details: { mode: "call", success: true },
 			}),
 		).toBe(false);
+	});
+
+	it("reads the available Python libraries from the vendored runtime requirements.txt", () => {
+		const libraries = pythonRuntimeLibraries();
+		for (const name of ["requests", "redis", "pyyaml", "python-dotenv", "psycopg", "psycopg-binary", "numpy"]) {
+			expect(libraries).toContain(name);
+		}
+		for (const name of ["pillow", "scikit-learn", "pyjwt", "lightgbm"]) {
+			expect(libraries).not.toContain(name);
+		}
+		expect(
+			parsePythonRuntimeRequirements(
+				"# comment\n-r base.in\nPsycopg[binary]==3.3.5\n    # via -r requirements.in\nTyping_Extensions==4.0\n\n",
+			),
+		).toEqual(["psycopg", "typing-extensions"]);
+		expect(normalizePythonRequirement("Kafka_Python>=3; python_version>'3'")).toBe("kafka-python");
+	});
+
+	it("blocks Python virtualenvs and package installs from the shell", () => {
+		for (const command of [
+			"python3 -m venv .venv",
+			"cd packages && python -m venv venv",
+			"virtualenv env",
+			"uv venv",
+			"uv add pyjwt",
+			"uv pip install pillow",
+			"pip install pyjwt",
+			"poetry init",
+			"pipenv install",
+			"conda create -n app",
+			"echo pyjwt >> packages/v1/login/requirements.txt",
+			"mkdir .venv",
+		]) {
+			expect(
+				managedPythonEnvironmentBlockReason("bash", { command }),
+				command,
+			).toContain("implement anything else in code");
+		}
+		for (const command of [
+			"python3 packages/v1/login/login.py",
+			"cat requirements.txt",
+			"rg venv AGENTS.md",
+		]) {
+			expect(
+				managedPythonEnvironmentBlockReason("bash", { command }),
+				command,
+			).toBeUndefined();
+		}
+	});
+
+	it("blocks writes to Python dependency metadata and virtualenv paths", () => {
+		for (const path of [
+			"packages/v1/login/requirements.txt",
+			"requirements-dev.txt",
+			"pyproject.toml",
+			"Pipfile",
+			"setup.py",
+			".venv/lib/python3.12/site-packages/x.py",
+			"venv/bin/activate",
+		]) {
+			expect(
+				managedPythonEnvironmentBlockReason("write", { path, content: "" }),
+				path,
+			).toBeTruthy();
+			expect(
+				managedPythonEnvironmentBlockReason("edit", { path }),
+				path,
+			).toBeTruthy();
+		}
+		expect(
+			managedPythonEnvironmentBlockReason("write", {
+				path: "packages/v1/login/login.py",
+			}),
+		).toBeUndefined();
+	});
+
+	it("allows action_requirements only for libraries the runtime ships", () => {
+		expect(
+			managedPythonEnvironmentBlockReason("mcp", {
+				server: "openserverless",
+				tool: "action_requirements",
+				args: '{"endpoint":"v1/cache","library":"Redis"}',
+			}),
+		).toBeUndefined();
+		expect(
+			managedPythonEnvironmentBlockReason("mcp", {
+				server: "openserverless",
+				tool: "action_requirements",
+				args: '{"endpoint":"v1/login","library":"PyJWT"}',
+			}),
+		).toContain("not shipped by the action runtime");
 	});
 });
