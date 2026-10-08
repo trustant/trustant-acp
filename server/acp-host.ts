@@ -31,6 +31,11 @@ import {
 	resolveProjectDir,
 } from "./config-store";
 import { resolveManagedPiRuntime } from "./managed-runtime";
+import {
+	claudeAcpPath,
+	claudeCliPath,
+	isClaudeInstalled,
+} from "./claude-install";
 
 /**
  * Build the runtime the ACP layer needs from the loaded config.
@@ -80,6 +85,23 @@ export function buildAgentConfig(
 		env,
 		workingDirectory,
 	};
+
+	if (agent.id === "claude") {
+		// WHY: Claude Code is proprietary and is not shipped with Trustant. It
+		// may only run from the on-demand install made after the user accepted
+		// Anthropic's terms, so whatever config.json says (an older `npx -y`
+		// entry would silently fetch an unpinned adapter) is overridden here.
+		if (!isClaudeInstalled()) {
+			throw new Error(
+				"Claude Code is not installed. Select Claude Code again to review Anthropic's terms and install it.",
+			);
+		}
+		base.command = claudeAcpPath();
+		base.args = [];
+		// Pin the adapter to the CLI installed next to it instead of the copy
+		// bundled with its SDK dependency.
+		base.env = { ...base.env, CLAUDE_CODE_EXECUTABLE: claudeCliPath() };
+	}
 
 	if (agent.apiKeyEnvVar) {
 		base.apiKey = {

@@ -6,8 +6,8 @@
     "claude": {
       "id": "claude",
       "displayName": "Claude Code",
-      "command": "npx",
-      "args": ["-y", "@agentclientprotocol/claude-agent-acp"],
+      "command": "claude-agent-acp",
+      "args": [],
       "env": [],
       "apiKeyEnvVar": "ANTHROPIC_API_KEY"
     },

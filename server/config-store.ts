@@ -68,8 +68,10 @@ export const DEFAULT_CONFIG: StandaloneConfig = {
 		claude: {
 			id: "claude",
 			displayName: "Claude Code",
-			command: "npx",
-			args: ["-y", "@agentclientprotocol/claude-agent-acp"],
+			// Resolved at spawn time to the on-demand install (see
+			// claude-install.ts); Claude Code is never shipped or fetched via npx.
+			command: "claude-agent-acp",
+			args: [],
 			env: [],
 			apiKeyEnvVar: "ANTHROPIC_API_KEY",
 		},

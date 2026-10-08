@@ -46,6 +46,11 @@ import {
 	claudeCompleteLogin,
 	type ClaudeLoginStatus,
 } from "./claude-login";
+import {
+	claudeInstallStatus,
+	installClaude,
+	type ClaudeInstallStatus,
+} from "./claude-install";
 import { statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { NotebookGitHubService } from "./notebook-github";
@@ -480,6 +485,16 @@ export const routes = {
 
 	"POST /api/codex/login-device": async (): Promise<CodexDeviceAuth> =>
 		codexStartDeviceAuth(),
+
+	// ---- claude install (on demand, after accepting Anthropic's terms) ----
+
+	"POST /api/claude/install-status": async (): Promise<ClaudeInstallStatus> =>
+		claudeInstallStatus(),
+
+	"POST /api/claude/install": async (
+		_ctx: RouteContext,
+		body: { accept?: boolean },
+	): Promise<ClaudeInstallStatus> => installClaude(body?.accept),
 
 	// ---- claude login (paste-code OAuth flow) -----------------------------
 

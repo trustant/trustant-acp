@@ -7,9 +7,10 @@
 # Blank lines and `#` comments are ignored. To upgrade, edit a version here;
 # nothing else needs to change.
 
-# Claude Code — CLI + ACP adapter
-@anthropic-ai/claude-code@2.1.216
-@agentclientprotocol/claude-agent-acp@0.60.0
+# Claude Code is NOT listed here on purpose: everything in this file ends up
+# in the published image, and Claude Code is proprietary. Its pins live in
+# server/claude-version.ts and TruACP installs it on demand after the user
+# accepts Anthropic's Commercial Terms.
 
 # Codex — CLI + ACP adapter
 # (@zed-industries/codex-acp is deprecated in favour of the

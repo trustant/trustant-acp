@@ -166,6 +166,18 @@ interface ClaudeAuthModal {
 	submitting: boolean;
 }
 
+/**
+ * Claude Code license gate: Claude Code is not shipped with Trustant, so the
+ * first selection shows Anthropic's Commercial Terms and installs it only
+ * after the user ticks the acceptance box.
+ */
+interface ClaudeLicenseModal {
+	termsUrl: string;
+	specs: string[];
+	accepted: boolean;
+	installing: boolean;
+}
+
 // ---- component ------------------------------------------------------------
 
 const transport = new AcpTransport("");
@@ -287,6 +299,8 @@ export function ChatApp(): React.ReactElement {
 	);
 	const [codexAuth, setCodexAuth] = useState<CodexAuthModal | null>(null);
 	const [claudeAuth, setClaudeAuth] = useState<ClaudeAuthModal | null>(null);
+	const [claudeLicense, setClaudeLicense] =
+		useState<ClaudeLicenseModal | null>(null);
 
 	const sessionRef = useRef<string | null>(null);
 	const configReconcileRef = useRef(false);
@@ -787,6 +801,7 @@ export function ChatApp(): React.ReactElement {
 			setEndpointCfg(null);
 			setCodexAuth(null);
 			setClaudeAuth(null);
+			setClaudeLicense(null);
 			setPiManaged(null);
 			setInput("");
 			resetPromptHistory();
@@ -796,6 +811,19 @@ export function ChatApp(): React.ReactElement {
 			setBusy(true);
 			try {
 				if (id === "claude") {
+					// Install gate first: Claude Code is installed on demand,
+					// only after the user accepts Anthropic's terms.
+					const install = await transport.claudeInstallStatus();
+					if (!install.installed) {
+						setBusy(false);
+						setClaudeLicense({
+							termsUrl: install.termsUrl,
+							specs: install.specs,
+							accepted: false,
+							installing: false,
+						});
+						return;
+					}
 					const status = await transport.claudeLoginStatus();
 					if (!status.loggedIn) {
 						setBusy(false);
@@ -1819,6 +1847,31 @@ export function ChatApp(): React.ReactElement {
 		}
 	}, [codexAuth, doConnect]);
 
+	/**
+	 * Accept Anthropic's terms and install Claude Code, then continue exactly
+	 * as a fresh selection would (login check, then connect).
+	 */
+	const installClaude = useCallback(async () => {
+		if (!claudeLicense?.accepted) return;
+		setClaudeLicense({ ...claudeLicense, installing: true });
+		setError(null);
+		try {
+			await transport.claudeInstall();
+		} catch (e) {
+			setError(String((e as Error).message ?? e));
+			setClaudeLicense((c) => (c ? { ...c, installing: false } : c));
+			return;
+		}
+		setClaudeLicense(null);
+		await selectAgent("claude");
+	}, [claudeLicense, selectAgent]);
+
+	/** Declining the terms leaves no agent selected. */
+	const cancelClaudeLicense = useCallback(() => {
+		if (claudeLicense?.installing) return;
+		void selectAgent("");
+	}, [claudeLicense, selectAgent]);
+
 	/** Submit the pasted claude code; connect if the popup was gating one. */
 	const submitClaudeCode = useCallback(async () => {
 		if (!claudeAuth || !claudeAuth.code.trim()) return;
@@ -2287,6 +2340,74 @@ export function ChatApp(): React.ReactElement {
 								{codexAuth.checking
 									? "Checking…"
 									: "Ho completato"}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{claudeLicense && (
+				<div className="modal-backdrop" onClick={cancelClaudeLicense}>
+					<div className="modal" onClick={(e) => e.stopPropagation()}>
+						<div className="modal-title">Install Claude Code</div>
+						<p className="modal-desc">
+							Claude Code is Anthropic software and is not
+							included in Trustant. To use it, review and accept
+							Anthropic&apos;s Commercial Terms; Trustant then
+							installs it from npm on this machine.
+						</p>
+						{/* Not an iframe: anthropic.com forbids framing
+						    (X-Frame-Options: SAMEORIGIN), so it would render
+						    blank. The terms open in a new tab instead. */}
+						<div className="modal-field">
+							<span>Terms</span>
+							<a
+								href={claudeLicense.termsUrl}
+								target="_blank"
+								rel="noreferrer"
+							>
+								Anthropic Commercial Terms of Service
+							</a>
+						</div>
+						<div className="modal-field">
+							<span>Packages</span>
+							<code>{claudeLicense.specs.join(", ")}</code>
+						</div>
+						<label className="modal-field">
+							<input
+								type="checkbox"
+								checked={claudeLicense.accepted}
+								disabled={claudeLicense.installing}
+								onChange={(e) =>
+									setClaudeLicense({
+										...claudeLicense,
+										accepted: e.target.checked,
+									})
+								}
+							/>
+							<span>
+								I have read and accept Anthropic&apos;s
+								Commercial Terms
+							</span>
+						</label>
+						<div className="modal-actions">
+							<button
+								className="secondary"
+								onClick={cancelClaudeLicense}
+								disabled={claudeLicense.installing}
+							>
+								Cancel
+							</button>
+							<button
+								onClick={() => void installClaude()}
+								disabled={
+									!claudeLicense.accepted ||
+									claudeLicense.installing
+								}
+							>
+								{claudeLicense.installing
+									? "Installing…"
+									: "Accept and install"}
 							</button>
 						</div>
 					</div>

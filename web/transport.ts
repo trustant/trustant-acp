@@ -50,6 +50,7 @@ interface LocalTemplateResponse {
 	prompts: string[];
 }
 import type { ShellExecutionResult } from "../server/shell-executor";
+import type { ClaudeInstallStatus } from "../server/claude-install";
 
 export interface AgentInfo {
 	id: string;
@@ -419,6 +420,16 @@ export class AcpTransport {
 		raw: string;
 	}> {
 		return this.call("/api/codex/login-device");
+	}
+
+	/** Whether Claude Code is installed and the terms were accepted. */
+	async claudeInstallStatus(): Promise<ClaudeInstallStatus> {
+		return this.call("/api/claude/install-status");
+	}
+
+	/** Accept Anthropic's terms and install Claude Code (pinned, from npm). */
+	async claudeInstall(): Promise<ClaudeInstallStatus> {
+		return this.call("/api/claude/install", { accept: true });
 	}
 
 	/** Run `claude auth status --text`. */
