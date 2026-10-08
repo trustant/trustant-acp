@@ -32,6 +32,7 @@
  * browser, copies the code, and submits it.
  */
 import { spawn, execFile, type ChildProcess } from "child_process";
+import { claudeCliPath } from "./claude-install";
 
 /** Result of `claude auth status --text`. */
 export interface ClaudeLoginStatus {
@@ -42,9 +43,14 @@ export interface ClaudeLoginStatus {
 	hasApiKey?: boolean;
 }
 
-/** Path/name of the claude binary (overridable for tests / custom installs). */
+/**
+ * Path of the claude binary (overridable for tests / custom installs). Defaults
+ * to the on-demand install, never a `claude` found on PATH: Claude Code is not
+ * shipped with Trustant, so only the copy installed after the user accepted
+ * Anthropic's terms may be used.
+ */
 function claudeCommand(): string {
-	return process.env.CLAUDE_COMMAND || "claude";
+	return process.env.CLAUDE_COMMAND || claudeCliPath();
 }
 
 /**

@@ -322,7 +322,7 @@ interface ISettingsAccess {
 **Session Management** (unstable): session/list, session/load, session/resume, session/fork
 
 **Agents** (see SPEC.md §10b/§10d):
-- Claude Code: `@agentclientprotocol/claude-agent-acp` (ANTHROPIC_API_KEY)
+- Claude Code: `@agentclientprotocol/claude-agent-acp` (ANTHROPIC_API_KEY) — never shipped; installed on demand after the user accepts Anthropic's terms (`server/claude-install.ts`)
 - Codex: `@agentclientprotocol/codex-acp` (OPENAI_API_KEY)
 - Pi: `pi-acp` (PI_API_KEY) — the default agent
 - Custom: Any ACP-compatible agent

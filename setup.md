@@ -63,9 +63,13 @@ offline. Each adapter drives an underlying CLI that must also be on PATH.
 
 | Agent | Package(s) | CLI on PATH |
 |---|---|---|
-| Claude Code | `@anthropic-ai/claude-code` + `@agentclientprotocol/claude-agent-acp` | `claude` |
 | Codex | `@openai/codex` + `@agentclientprotocol/codex-acp` | `codex` |
 | Pi | five lockstep `@earendil-works/pi-*` packages + Trustant `pi-acp` fork | `pi` |
+
+Claude Code is **not** installed by `setup.sh`: it is proprietary and this script
+also builds the published image. TruACP installs it on demand into
+`$TRUACP_CLAUDE_PREFIX` after the user accepts Anthropic's Commercial Terms
+(see [SPEC.md](SPEC.md) §10d); its pins live in `server/claude-version.ts`.
 
 Pi additionally gets two extensions to the `pi` CLI (not ACP adapters),
 registered by `pi install` rather than only copied by global npm:
@@ -93,9 +97,8 @@ hardcoded in `setup.sh`.** Each line is a literal npm install spec,
 `<module>@<version>`; `#` comments and blank lines are ignored:
 
 ```
-# Claude Code — CLI + ACP adapter
-@anthropic-ai/claude-code@2.1.216
-@agentclientprotocol/claude-agent-acp@0.60.0
+# Codex — CLI + ACP adapter
+@openai/codex@0.144.6
 ...
 @earendil-works/pi-ai@0.82.0
 @earendil-works/pi-tui@0.82.0
@@ -117,7 +120,7 @@ Trustant no longer builds, packages, or initializes a `pi` source fork.
 **Every entry must carry a version.** An unpinned spec would silently resolve to
 latest and break build reproducibility, so the script treats it as an error and
 aborts rather than falling back. A scoped name without a version
-(`@anthropic-ai/claude-code`) is correctly detected as unpinned — the leading `@`
+(`@openai/codex`) is correctly detected as unpinned — the leading `@`
 of the scope is not mistaken for a version separator. A missing, empty, or
 comment-only manifest likewise aborts.
 

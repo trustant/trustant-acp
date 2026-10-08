@@ -19,6 +19,23 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import { describe, expect, it } from "vitest";
 
+describe("pi.version never ships Claude Code", () => {
+	it("keeps proprietary Claude packages out of the image install list", async () => {
+		// Everything in pi.version is installed by setup.sh and so baked into
+		// the published image; Claude Code is installed on demand instead.
+		const versions = await readFile(
+			join(process.cwd(), "pi.version"),
+			"utf8",
+		);
+		const specs = versions
+			.split("\n")
+			.map((l) => l.replace(/#.*/, "").trim())
+			.filter(Boolean);
+		expect(specs.some((s) => s.startsWith("@anthropic-ai/"))).toBe(false);
+		expect(specs.some((s) => s.includes("claude-agent-acp"))).toBe(false);
+	});
+});
+
 describe("setup.sh Pi runtime sources", () => {
 	it("verifies upstream Pi and keeps only the pi-acp fork", async () => {
 		const setup = await readFile(join(process.cwd(), "setup.sh"), "utf8");

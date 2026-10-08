@@ -80,7 +80,10 @@ echo "Using: node $(node -v), npm $(npm -v)"
 #
 # The ACP adapters are what config.json spawns (`npx -y <adapter>`); installing
 # them globally makes launches instant and lets them work offline. Each adapter
-# drives an underlying CLI that must also be on PATH: `claude`, `codex`, `pi`.
+# drives an underlying CLI that must also be on PATH: `codex`, `pi`.
+# Claude Code is deliberately NOT installed here: it is proprietary, and this
+# script also builds the published image. TruACP installs it on demand, after
+# the user accepts Anthropic's terms (server/claude-install.ts).
 # Pi extensions differ: their npm package must also be recorded by `pi install`
 # before Pi loads the extension.
 #
