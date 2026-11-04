@@ -542,6 +542,13 @@ The chat UI connects to a default agent and lets the user switch:
   publishes `piAcp.activity` metadata and the UI shows its label plus elapsed
   time. This is activity, not a fabricated percentage: Pi does not expose a
   reliable total-work denominator.
+- The header row **never wraps** (#211). As the panel narrows, the agent,
+  model and thinking/reasoning dropdowns shrink (with ellipsis) down to
+  `--topbar-select-min`; status and icon buttons keep their size. When framed,
+  `web/min-width-bridge.ts` posts `{type: "trustant-chat-min-width", px}` to the
+  parent: the header width with every dropdown at its minimum. It recomputes on
+  resize and when header children change (agent switch). The host clamps its
+  divider to that width, so the panel cannot shrink further.
 - **New session** is the prominent, non-wrapping header action that creates a
   fresh session in the current cwd. **Sessions** lists resumable Pi sessions and
   loads the selected one through ACP `session/load`. The managed header does not

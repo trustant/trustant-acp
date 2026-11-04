@@ -76,8 +76,13 @@ body {
 }
 
 /* top bar */
+/* The header never wraps: when the chat panel narrows the dropdowns shrink
+   down to --topbar-select-min, and the host stops the divider there (#211). */
 .topbar {
+	--topbar-select-min: 5rem;
 	display: flex;
+	flex-wrap: nowrap;
+	min-width: 0;
 	align-items: center;
 	gap: 0.6rem;
 	padding: 0.6rem 0.9rem;
@@ -112,6 +117,8 @@ body {
 	cursor: default;
 }
 .topbar .status {
+	flex: 0 0 auto;
+	white-space: nowrap;
 	color: var(--accent);
 	font-weight: 500;
 }
@@ -625,6 +632,16 @@ body {
 .topbar .reasoning-select {
 	max-width: 9rem;
 }
+.topbar .agent-select {
+	max-width: 10rem;
+}
+.topbar .agent-select,
+.topbar .model-select,
+.topbar .reasoning-select {
+	flex: 0 1 auto;
+	min-width: var(--topbar-select-min);
+	text-overflow: ellipsis;
+}
 .topbar .model-select:disabled,
 .topbar .reasoning-select:disabled {
 	opacity: 0.5;
@@ -1052,14 +1069,6 @@ body {
 }
 
 @media (max-width: 700px) {
-	.topbar {
-		flex-wrap: wrap;
-	}
-	.topbar .cwd {
-		flex-basis: 100%;
-		max-width: 100%;
-		margin-left: 0;
-	}
 	.turn .bubble {
 		max-width: 95%;
 	}
