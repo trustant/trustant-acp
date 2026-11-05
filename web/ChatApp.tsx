@@ -27,6 +27,7 @@
 import React, {
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -310,6 +311,18 @@ export function ChatApp(): React.ReactElement {
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const promptHistoryRef = useRef(createPromptHistoryCursor());
 	const connectionState = headerConnectionState(ready, busy);
+
+	// The composer starts at one row and grows with its content (issue #186).
+	// CSS cannot size a textarea to its content in every browser we support,
+	// so the height is measured here; the 1- and 5-row bounds stay in
+	// styles.css (min-/max-height), which caps the measured value. Keyed on
+	// `input` so Send and prompt-history recall resize it too.
+	useLayoutEffect(() => {
+		const el = textareaRef.current;
+		if (!el) return;
+		el.style.height = "auto";
+		el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
+	}, [input]);
 
 	const userPrompts = useMemo(
 		() =>
@@ -2686,6 +2699,7 @@ export function ChatApp(): React.ReactElement {
 			<footer className="composer">
 				<textarea
 					ref={textareaRef}
+					rows={1}
 					value={input}
 					placeholder={
 						ready ? READY_COMPOSER_PLACEHOLDER : "Please Select Agent"

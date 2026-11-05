@@ -339,13 +339,22 @@ body {
 	padding: 0.7rem 0.9rem;
 	border-top: 1px solid var(--border);
 	background: var(--bg-alt);
+	/* Keep the button one row high at the bottom while the textarea grows. */
+	align-items: flex-end;
+	--composer-line: 1.4em;
+	--composer-row: calc(var(--composer-line) + 1rem + 2px);
 }
 .composer textarea {
 	flex: 1;
 	resize: none;
-	min-height: 2.6rem;
-	max-height: 8rem;
+	box-sizing: border-box;
+	/* One row by default, auto-grown by ChatApp up to five, then scrolls. */
+	min-height: var(--composer-row);
+	max-height: calc(5 * var(--composer-line) + 1rem + 2px);
+	overflow-y: auto;
 	font: inherit;
+	/* After `font`, whose shorthand resets line-height. */
+	line-height: var(--composer-line);
 	padding: 0.5rem 0.7rem;
 	border: 1px solid var(--border);
 	border-radius: 8px;
@@ -354,6 +363,7 @@ body {
 }
 .composer button {
 	font: inherit;
+	height: var(--composer-row);
 	padding: 0 1.1rem;
 	border: none;
 	border-radius: 8px;

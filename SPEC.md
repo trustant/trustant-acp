@@ -559,6 +559,10 @@ The chat UI connects to a default agent and lets the user switch:
   session with `ArrowUp`/`ArrowDown`. It preserves the unfinished draft and
   does not intercept selection, IME/modifier input, or ordinary multiline
   cursor movement.
+- The composer textarea starts **one row** high and auto-grows with its
+  content (wrapped lines or Shift+Enter) up to **five rows**, then scrolls;
+  it shrinks back after Send or prompt recall. Enter sends. The Send/Stop
+  button stays one row high, aligned to the bottom of the textarea.
 - In a ready session the composer placeholder is exactly **"Message the agent
   or use the '!' to execute shell commands."** A trimmed submission whose first
   character is `!` bypasses ACP and every agent, while embedded `!` characters
