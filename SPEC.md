@@ -648,16 +648,16 @@ valid.
 The managed extension normalizes the real `pi-mcp-adapter` proxy contract,
 including full tool names such as `openserverless_action_new`, JSON-string
 `args`, and both server-discovery shapes: `mcp({server:"..."})` and
-`mcp({connect:"..."})`. Before application work it requires proof that the MCP
-proxy is reachable and successful discovery for every server named by the
-managed manifest. A successful `connect` supplies both proxy-reachability
-evidence and discovery evidence for that server; the compatible
-`mcp({})` plus per-server `server` sequence remains valid. It blocks raw
+`mcp({connect:"..."})`. Discovery is enforced per server: a tool call on a
+manifest server is blocked until that server has been successfully discovered
+with `connect` or `server` (trustant#75). File edits, shell commands, and calls
+on other servers are not held by it, because an up-front discovery of every
+server cost one model round-trip per server before any work. It blocks raw
 action/service administration, direct service clients,
 manual action scaffold/wrapper generation, ad-hoc dependency installation,
 service-MCP writes, shell-based `src/`/`packages/` writes, destructive Git
 recovery, and piecemeal Redis wiring for authentication endpoints.
-Only successful tool results advance bootstrap, checker, React-validation, and
+Only successful tool results advance server discovery, checker, React-validation, and
 source-revision state. After three semantically equivalent failures without a
 successful relevant source or OpenServerless-wiring mutation, the same strategy
 is rejected until the model changes its hypothesis/inputs or makes real

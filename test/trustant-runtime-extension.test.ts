@@ -169,7 +169,7 @@ describe("Trustant Pi runtime extension", () => {
 			"OpenServerless auth_setup tool once",
 		);
 		expect(trustantRuntimeSystemPrompt(manifest)).toContain(
-			"complete the mandatory MCP bootstrap",
+			"Discover only the servers you are about to use",
 		);
 		expect(trustantRuntimeSystemPrompt(manifest)).toContain(
 			"Only the user may change application environment values",
@@ -627,89 +627,82 @@ describe("Trustant Pi runtime extension", () => {
 		).rejects.toThrow("timed out after 5ms");
 	});
 
-	it("requires successful status and every required server listing before work", () => {
-		const listed = new Set<string>(["browser"]);
+	it("does not hold file edits, shell, or discovery behind MCP discovery", () => {
+		// Regression (#75): an up-front bootstrap of every server cost one
+		// model round-trip per server before Pi could touch a file.
+		const required = ["browser", "openserverless", "postgres"];
+		const listed = new Set<string>();
+		for (const [toolName, input] of [
+			["write", { path: "src/App.tsx" }],
+			["edit", { path: "src/App.tsx" }],
+			["bash", { command: "ls src" }],
+			["mcp", {}],
+			["mcp", { connect: "openserverless" }],
+			["mcp", { server: "postgres" }],
+		] as const) {
+			expect(
+				managedBootstrapBlockReason(toolName, input, listed, required),
+			).toBeUndefined();
+		}
+	});
+
+	it("blocks a server's tool calls until that server alone is discovered", () => {
+		const required = ["browser", "openserverless", "postgres"];
+		const listed = new Set<string>();
+		const actionNew = {
+			tool: "openserverless_action_new",
+			args: '{"endpoint":"v1/users"}',
+		};
+		const postgresQuery = { tool: "postgres_query", args: "{}" };
+		const blocked = managedBootstrapBlockReason(
+			"mcp",
+			actionNew,
+			listed,
+			required,
+		);
+		expect(blocked).toContain('mcp({connect:"openserverless"})');
+		expect(blocked).not.toContain("postgres");
+
+		// Regression: this is the exact discovery shape Pi used in trulongrun6.
+		recordManagedMcpBootstrapResult(
+			managedMcpInvocation("mcp", { connect: "openserverless" }, required),
+			true,
+			listed,
+		);
 		expect(
-			managedBootstrapBlockReason(
-				"mcp",
-				{},
-				false,
-				listed,
-				["browser", "openserverless"],
-			),
+			managedBootstrapBlockReason("mcp", actionNew, listed, required),
 		).toBeUndefined();
 		expect(
-			managedBootstrapBlockReason(
-				"write",
-				{ path: "src/App.tsx" },
-				true,
-				listed,
-				["browser", "openserverless"],
-			),
-		).toContain('mcp({connect:"openserverless"})');
+			managedBootstrapBlockReason("mcp", postgresQuery, listed, required),
+		).toContain('mcp({connect:"postgres"})');
+
+		recordManagedMcpBootstrapResult(
+			managedMcpInvocation("mcp", { server: "postgres" }, required),
+			true,
+			listed,
+		);
 		expect(
-			managedBootstrapBlockReason(
-				"mcp",
-				{ connect: "openserverless" },
-				false,
-				listed,
-				["browser", "openserverless"],
-			),
-		).toBeUndefined();
-		expect(
-			managedBootstrapBlockReason(
-				"mcp",
-				{
-					tool: "openserverless_action_new",
-					args: '{"endpoint":"v1/users"}',
-				},
-				true,
-				new Set(["browser", "openserverless"]),
-				["browser", "openserverless"],
-			),
+			managedBootstrapBlockReason("mcp", postgresQuery, listed, required),
 		).toBeUndefined();
 	});
 
-	it("accepts successful connect-all bootstrap and ignores failed connects", () => {
-		const required = ["browser", "openserverless"];
+	it("ignores failed connects", () => {
+		const required = ["openserverless"];
 		const listed = new Set<string>();
-		let statusSeen = false;
-
-		// Regression: this is the exact discovery shape Pi used in trulongrun6.
-		for (const server of required) {
-			statusSeen = recordManagedMcpBootstrapResult(
-				managedMcpInvocation("mcp", { connect: server }, required),
-				true,
-				statusSeen,
-				listed,
-			);
-		}
-		expect(statusSeen).toBe(true);
-		expect(listed).toEqual(new Set(required));
+		recordManagedMcpBootstrapResult(
+			managedMcpInvocation("mcp", { connect: "openserverless" }, required),
+			false,
+			listed,
+		);
+		expect(listed.size).toBe(0);
 		expect(
 			managedBootstrapBlockReason(
-				"write",
-				{ path: "src/App.tsx" },
-				statusSeen,
+				"mcp",
+				{ tool: "openserverless_action_new", args: "{}" },
 				listed,
 				required,
 			),
-		).toBeUndefined();
-
-		const failedListed = new Set<string>();
-		expect(
-			recordManagedMcpBootstrapResult(
-				managedMcpInvocation(
-					"mcp",
-					{ connect: "openserverless" },
-					required,
-				),
-				false,
-				false,
-				failedListed,
-			),
-		).toBe(false);
-		expect(failedListed.size).toBe(0);
+		).toContain('mcp({connect:"openserverless"})');
 	});
 
 	it("opens the semantic circuit after three equivalent failures and resets on progress", () => {

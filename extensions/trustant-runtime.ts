@@ -533,7 +533,7 @@ export function trustantRuntimeSystemPrompt(
 		`  Required MCP servers: ${workbench.requiredMcpServers.join(", ")}`,
 		"  Operate only inside the declared workbench.",
 		"  MCP discovery is host-managed and credential-free. Never read the private MCP config, inspect managed-process environments, or start MCP server commands manually.",
-		"  Before application work, complete the mandatory MCP bootstrap with either sequence: (a) call mcp({}) once, then mcp({server:\"<name>\"}) for every required server listed above; or (b) call mcp({connect:\"<name>\"}) for every required server. A successful connect is stronger evidence and satisfies both proxy reachability and that server's tool discovery. Use the exact tool names and schemas returned by those calls. Do not infer tool availability from memory or repository prose.",
+		"  Before calling a server's tools for the first time, discover that server with mcp({connect:\"<name>\"}) and use the exact tool names and schemas it returns. Discover only the servers you are about to use; file edits and shell checks need no MCP discovery. Do not infer tool availability from memory or repository prose.",
 		"  Treat service MCPs as discovery and read-only verification interfaces. Application schemas, seed data, and writes belong in reproducible setup/actions created through the OpenServerless MCP, never in direct service-MCP repair calls.",
 		"  Run the deterministic React MCP react_validate after frontend mutations. Agentic React is optional selection context, not source validation.",
 		"  The existing ops ide devel watcher is the sole owner of live action deployment. Never run ops ide deploy or start another ops ide devel process.",
@@ -1179,84 +1179,58 @@ export class ManagedSemanticCircuit {
 	}
 }
 
+/**
+ * Block an MCP tool call until its own server has been discovered.
+ *
+ * WHY (issue #75): gating every write/edit/bash and every tool on discovery of
+ * all required servers cost one model round-trip per server (6-9 on a typical
+ * workbench) before any work, and each blocked call added a re-plan; slow
+ * models sat "reasoning" for minutes. Discovery only protects tool names and
+ * schemas, so it is enforced per server, right where those schemas are used.
+ */
 export function managedBootstrapBlockReason(
 	toolName: string,
 	input: Record<string, unknown>,
-	statusSeen: boolean,
 	listedServers: ReadonlySet<string>,
 	requiredServers: string[],
 ): string | undefined {
-	const missingServers = requiredServers.filter(
-		(server) => !listedServers.has(server),
-	);
-	const complete = statusSeen && missingServers.length === 0;
-	if (complete) {
-		return undefined;
-	}
 	const invocation = managedMcpInvocation(
 		toolName,
 		input,
 		requiredServers,
 	);
+	// An unrecognized server is left to the adapter, which rejects it itself.
 	if (
-		invocation?.mode === "status" ||
-		((invocation?.mode === "list" ||
-			invocation?.mode === "connect") &&
-			invocation.server &&
-			requiredServers.includes(invocation.server))
+		invocation?.mode !== "call" ||
+		!invocation.server ||
+		!requiredServers.includes(invocation.server) ||
+		listedServers.has(invocation.server)
 	) {
 		return undefined;
 	}
-	const isWork =
-		invocation?.mode === "call" ||
-		toolName === "write" ||
-		toolName === "edit" ||
-		toolName === "bash" ||
-		toolName === "shell";
-	if (!isWork) {
-		return undefined;
-	}
-	// WHY: do not tell Pi to perform both equivalent bootstrap sequences. The
-	// adapter's successful `connect` form supplies reachability and discovery,
-	// while cached `server` listings still require the separate global status.
-	const reachability = statusSeen
-		? ""
-		: "Prove MCP proxy reachability with mcp({}) or a successful required-server connect. ";
-	const discovery = missingServers
-		.map(
-			(server) =>
-				`mcp({connect:${JSON.stringify(server)}}) or mcp({server:${JSON.stringify(server)}})`,
-		)
-		.join(", ");
-	return `Trustant blocked application work until the mandatory MCP bootstrap succeeds. ${reachability}Discover every missing server and use its exact returned tool schemas: ${discovery}.`;
+	const server = JSON.stringify(invocation.server);
+	return `Trustant blocked this ${invocation.server} tool call until the server is discovered. Call mcp({connect:${server}}) or mcp({server:${server}}) once and use its exact returned tool schemas.`;
 }
 
 /**
- * Apply only successful adapter discovery evidence to the managed bootstrap.
+ * Apply only successful adapter discovery evidence to the per-server gate.
  *
- * WHY: `connect` is stronger than a cached server listing: it proves the MCP
- * proxy can reach the selected server and refresh its tool metadata. Keeping
- * this transition explicit also guarantees a failed connect cannot unlock
- * application work.
+ * WHY: a `connect` proves the proxy reaches the server and refreshes its tool
+ * metadata; a `server` listing returns its cached schemas. Either is enough
+ * to use that server's tools, while a failed attempt must unlock nothing.
  */
 export function recordManagedMcpBootstrapResult(
 	invocation: ManagedMcpInvocation | undefined,
 	succeeded: boolean,
-	statusSeen: boolean,
 	listedServers: Set<string>,
-): boolean {
-	if (!succeeded || !invocation) {
-		return statusSeen;
-	}
+): void {
 	if (
-		(invocation.mode === "list" || invocation.mode === "connect") &&
+		succeeded &&
+		(invocation?.mode === "list" || invocation?.mode === "connect") &&
 		invocation.server
 	) {
 		listedServers.add(invocation.server);
 	}
-	return statusSeen ||
-		invocation.mode === "status" ||
-		invocation.mode === "connect";
 }
 
 function toolResultText(event: ToolResultEvent): string {
@@ -1488,7 +1462,6 @@ export default function trustantRuntimeExtension(
 	let checkerRanSinceMutation = false;
 	let reactValidationRequired = false;
 	let redeployRequired = false;
-	let mcpStatusSeen = false;
 	const listedMcpServers = new Set<string>();
 	const pendingAttempts = new Map<string, PendingToolAttempt>();
 	const semanticCircuit = new ManagedSemanticCircuit();
@@ -1641,7 +1614,6 @@ export default function trustantRuntimeExtension(
 		const bootstrapBlockReason = managedBootstrapBlockReason(
 			event.toolName,
 			event.input,
-			mcpStatusSeen,
 			listedMcpServers,
 			current.requiredMcpServers,
 		);
@@ -1779,10 +1751,9 @@ export default function trustantRuntimeExtension(
 			return undefined;
 		}
 		const failed = managedToolResultFailed(event);
-		mcpStatusSeen = recordManagedMcpBootstrapResult(
+		recordManagedMcpBootstrapResult(
 			attempt.invocation,
 			!failed,
-			mcpStatusSeen,
 			listedMcpServers,
 		);
 		if (failed) {
