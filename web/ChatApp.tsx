@@ -2076,6 +2076,7 @@ export function ChatApp(): React.ReactElement {
 				    switching the transport underneath an in-flight Pi request
 				    would make Stop target the wrong ACP session. */}
 				<select
+					className="agent-select"
 					value={agentId}
 					disabled={busy || running}
 					onChange={(e) => void selectAgent(e.target.value)}

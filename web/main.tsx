@@ -22,6 +22,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { ChatApp } from "./ChatApp";
+import { installMinWidthBridge } from "./min-width-bridge";
 import { installTourBridge } from "./tour-bridge";
 import "./styles.css";
 
@@ -31,6 +32,8 @@ if (!container) throw new Error("#root not found");
 // The embedding Trustant host drives guided tutorials across the origin
 // boundary; the bridge stays dormant until that host asks for target rects.
 installTourBridge();
+// The host owns the divider; tell it how narrow the chat header can go.
+installMinWidthBridge();
 createRoot(container).render(
 	<React.StrictMode>
 		<ChatApp />
