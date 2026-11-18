@@ -64,8 +64,6 @@ defusedxml==0.7.1
     # via nltk
 distro==1.9.0
     # via langsmith
-dnspython==2.8.0
-    # via pymongo
 feedparser==6.0.14
     # via -r requirements.in
 feedparser-sgmllib==2.1.0
@@ -191,8 +189,6 @@ pydantic==2.13.5
 pydantic-core==2.46.5
     # via pydantic
 pymilvus==3.0.2
-    # via -r requirements.in
-pymongo==4.18.1
     # via -r requirements.in
 pyparsing==3.3.2
     # via httplib2

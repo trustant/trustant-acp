@@ -499,7 +499,8 @@ export function managedMcpInvocation(
 			"react",
 			"postgres",
 			"redis",
-			"mongodb",
+			// "mongodb" is gone: Trustant never uses MongoDB (trustant#230), so
+			// the host never generates that server and no tool may infer it.
 			"milvus",
 			"s3",
 		]),
@@ -709,8 +710,9 @@ const SERVICE_MCP_MUTATIONS: Record<string, RegExp> = {
 		/(?:^|_)(?:execute_sql|create|alter|drop|truncate|insert|update|delete|grant|revoke)(?:_|$)/,
 	redis:
 		/(?:^|_)(?:set|delete|del|hset|hdel|lpush|rpush|sadd|srem|zadd|zrem|expire|persist|rename|flush|incr|decr)(?:_|$)/,
-	mongodb:
-		/(?:^|_)(?:insert|update|delete|replace|bulk|create|drop|rename|write)(?:_|$)/,
+	// No mongodb entry: the host no longer generates a MongoDB MCP server
+	// (trustant#230). Direct `mongodb-mcp-server`/`mongosh` launches stay blocked
+	// below as defense in depth for workbenches created by older builds.
 	s3: /(?:^|_)(?:put|upload|delete|copy|create)(?:_|$)/,
 	milvus:
 		/(?:^|_)(?:insert|upsert|delete|create|drop|load|release|compact|flush)(?:_|$)/,

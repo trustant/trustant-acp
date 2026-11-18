@@ -105,7 +105,7 @@ describe("Trustant Pi runtime extension", () => {
 			JSON.stringify({
 				mcpServers: {
 					openserverless: {},
-					mongodb: {},
+					postgres: {},
 				},
 			}),
 		);
@@ -117,9 +117,9 @@ describe("Trustant Pi runtime extension", () => {
 						type: "stdio",
 						command: "openserverless-mcp",
 					},
-					mongodb: {
+					postgres: {
 						type: "stdio",
-						command: "mongodb-mcp-server",
+						command: "postgres-mcp",
 					},
 				},
 			}),
@@ -135,7 +135,7 @@ describe("Trustant Pi runtime extension", () => {
 						workspace: workbench,
 						developmentUrl: "http://localhost:5173",
 						browserUrl: "http://vite.example.test",
-						requiredMcpServers: ["mongodb", "openserverless"],
+						requiredMcpServers: ["openserverless", "postgres"],
 						mcpConfig,
 						watcherLog,
 					},
@@ -147,7 +147,7 @@ describe("Trustant Pi runtime extension", () => {
 			TRUSTANT_MANAGED_RUNTIME: "1",
 			TRUSTANT_RUNTIME_CONFIG: manifestPath,
 		});
-		expect(manifest.requiredMcpServers).toEqual(["mongodb", "openserverless"]);
+		expect(manifest.requiredMcpServers).toEqual(["openserverless", "postgres"]);
 		expect(pathIsWithin(workbench, nested)).toBe(true);
 		expect(pathIsWithin(workbench, join(root, "other"))).toBe(false);
 		expect(trustantRuntimeSystemPrompt(manifest)).toContain(
@@ -305,7 +305,6 @@ describe("Trustant Pi runtime extension", () => {
 		for (const [server, tool] of [
 			["postgres", "postgres_execute_sql"],
 			["redis", "redis_set"],
-			["mongodb", "insert_many"],
 			["s3", "put_object"],
 			["milvus", "upsert"],
 		]) {
