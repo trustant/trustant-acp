@@ -87,6 +87,15 @@ once. Proxy calls, direct tools, and MCP UI proxy calls share this manager path.
 The transform is idempotent, validates every expected source before writing,
 and fails setup if the installed version or source layout differs.
 
+The pinned `@earendil-works/pi-ai` is patched the same way right after the
+global install (trustant#206). Ollama Cloud answers HTTP 429 with "session usage
+limit" once the session quota is exhausted, and Pi's retry classifier treated
+every 429 as a transient rate limit, so the turn was retried three times. Setup
+adds `"session usage limit"` to the non-retryable provider-limit patterns in
+`dist/utils/retry.js` of every installed copy of the pinned version (including
+the one nested under `pi-coding-agent`, which is what agent sessions import).
+It is idempotent and fails setup if the expected anchor is missing.
+
 For Codex, `@zed-industries/codex-acp` is deprecated in favour of the
 `@agentclientprotocol` scope.
 
