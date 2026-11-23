@@ -170,3 +170,32 @@ export function sanitizeTemplateFrontMatter(
 	}
 	return { name, repo, file, edited: input.edited === true, extra };
 }
+
+/**
+ * One-shot launch bootstrap.
+ *
+ * Trustant sets `TRUSTANT_BOOTSTRAP_NOTEBOOK=1` on the TruACP process for the
+ * first launch of an application that ships a working copy to run immediately
+ * (the Lovable conversion, trustant spec/21-lovable.md). The first client that
+ * asks consumes the flag, so a page reload or a second tab never re-runs it;
+ * Trustant clears its own flag after starting TruACP, so a relaunch does not
+ * either.
+ */
+let bootstrapConsumed = false;
+
+export async function consumeNotebookBootstrap(
+	projectDir: string,
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<{ run: boolean }> {
+	if (bootstrapConsumed || env.TRUSTANT_BOOTSTRAP_NOTEBOOK !== "1") {
+		return { run: false };
+	}
+	bootstrapConsumed = true;
+	const local = await readLocalTemplate(projectDir);
+	return { run: local.exists && local.prompts.length > 0 };
+}
+
+/** Test hook: forget that the bootstrap was consumed. */
+export function resetNotebookBootstrapForTest(): void {
+	bootstrapConsumed = false;
+}
