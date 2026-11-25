@@ -91,6 +91,13 @@ describe("setup.sh Pi runtime sources", () => {
 		expect(setup).toContain(
 			"this is the single allowed retry",
 		);
+		// trustant#206: Ollama's 429 "session usage limit" must not be retried.
+		expect(setup).toContain("<<'PI_AI_RETRY_PATCH'");
+		expect(setup).toContain('join(dir, "dist", "utils", "retry.js")');
+		expect(setup).toContain(`const marker = '"session usage limit",';`);
+		expect(setup).toContain(
+			`const anchor = '    "Monthly usage limit reached",\\n';`,
+		);
 		expect(versions).not.toMatch(/^pi-acp@/m);
 		for (const name of [
 			"pi-ai",

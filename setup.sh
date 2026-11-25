@@ -254,6 +254,106 @@ fi
 if [ -n "$PI_ACP_BUILD_DIR" ]; then
 	rm -rf "$PI_ACP_BUILD_DIR"
 fi
+
+# pi-ai 0.82.0 retries every assistant error whose text contains "429", unless
+# it matches a short list of quota/billing patterns. Ollama Cloud answers 429
+# with "session usage limit" once the session quota is exhausted, so Pi retried
+# a request that cannot succeed three times (trustant#206). Pi exposes no
+# extension hook on that decision, so add the pattern to the non-retryable list
+# in every installed pi-ai copy of the pinned version (the top-level package
+# and the copy nested under pi-coding-agent, which is the one agent-session
+# imports). The integrity-verified tarball is unchanged; the transform is
+# version-guarded, idempotent, and fails closed on an unexpected layout.
+PI_AI_SPEC=""
+for pkg in $GLOBAL_PACKAGES; do
+	case "$pkg" in
+	@earendil-works/pi-ai@*) PI_AI_SPEC="$pkg" ;;
+	esac
+done
+if [ -z "$PI_AI_SPEC" ]; then
+	echo "✗ pi.version does not contain a pinned @earendil-works/pi-ai package." >&2
+	exit 1
+fi
+
+node - "$INSTALL_PREFIX/lib/node_modules" "${PI_AI_SPEC##*@}" <<'PI_AI_RETRY_PATCH'
+const {
+	existsSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	statSync,
+	writeFileSync,
+} = require("node:fs");
+const { join } = require("node:path");
+
+const [nodeModules, expectedVersion] = process.argv.slice(2);
+const marker = '"session usage limit",';
+const anchor = '    "Monthly usage limit reached",\n';
+const replacement =
+	anchor +
+	"    // Trustant (trustant#206): Ollama Cloud answers HTTP 429 with this text\n" +
+	"    // once the session quota is exhausted; retrying cannot succeed.\n" +
+	'    "session usage limit",\n';
+
+// Every @earendil-works/pi-ai below nodeModules, including nested copies.
+function findPiAi(dir, depth, found) {
+	if (depth > 6 || !existsSync(dir)) return found;
+	const candidate = join(dir, "@earendil-works", "pi-ai");
+	if (existsSync(join(candidate, "package.json"))) found.push(candidate);
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+		const packages = entry.name.startsWith("@")
+			? readdirSync(join(dir, entry.name), { withFileTypes: true })
+					.filter((child) => child.isDirectory())
+					.map((child) => join(dir, entry.name, child.name))
+			: [join(dir, entry.name)];
+		for (const pkg of packages) {
+			findPiAi(join(pkg, "node_modules"), depth + 1, found);
+		}
+	}
+	return found;
+}
+
+const targets = findPiAi(nodeModules, 0, [])
+	.filter((dir) => {
+		const { version } = JSON.parse(
+			readFileSync(join(dir, "package.json"), "utf8"),
+		);
+		return version === expectedVersion;
+	})
+	.map((dir) => {
+		const path = join(dir, "dist", "utils", "retry.js");
+		return { path, source: readFileSync(path, "utf8") };
+	});
+if (targets.length === 0) {
+	throw new Error(
+		`no @earendil-works/pi-ai ${expectedVersion} found under ${nodeModules}`,
+	);
+}
+
+const pending = [];
+for (const target of targets) {
+	if (target.source.includes(marker)) continue;
+	const count = target.source.split(anchor).length - 1;
+	if (count !== 1) {
+		throw new Error(
+			`pi-ai ${expectedVersion}: expected one patch target in ${target.path}, found ${count}`,
+		);
+	}
+	pending.push({ ...target, updated: target.source.replace(anchor, replacement) });
+}
+
+for (const { path, updated } of pending) {
+	const temporary = `${path}.trustant-new`;
+	writeFileSync(temporary, updated, { mode: statSync(path).mode & 0o777 });
+	renameSync(temporary, path);
+}
+console.log(
+	pending.length === 0
+		? `pi-ai ${expectedVersion} Ollama session-limit non-retry patch already applied`
+		: `Applied pi-ai ${expectedVersion} Ollama session-limit non-retry patch to ${pending.length} of ${targets.length} copies`,
+);
+PI_AI_RETRY_PATCH
 # Resolve the Pi binary from the prefix just populated instead of assuming the
 # caller has already refreshed PATH. This is required in fresh VM/image builds.
 PI_BIN="$INSTALL_PREFIX/bin/pi"

@@ -437,6 +437,14 @@ The agents and their adapters:
   original tool call exactly once. Proxy, direct-tool, and MCP UI paths use the
   same manager recovery. Setup validates the exact version and every source
   target before writing, remains idempotent, and fails closed on source drift.
+- Every installed `@earendil-works/pi-ai` copy of the pinned version (top-level
+  and the one nested under `pi-coding-agent`) is patched after the global
+  install: `"session usage limit"` joins the non-retryable provider-limit
+  patterns in `dist/utils/retry.js`. Ollama Cloud answers HTTP 429 with that
+  text when the session quota is exhausted; without the patch Pi treated it as
+  a rate limit and retried the turn three times (trustant#206). Other versions
+  are left untouched; the transform is idempotent and fails closed when the
+  `"Monthly usage limit reached",` anchor is missing.
 - `@zed-industries/codex-acp` is deprecated; config and this script use the
   maintained `@agentclientprotocol/codex-acp` (same `codex-acp` bin, drop-in).
 - The script installs into npm's global prefix when writable, else falls back to a
