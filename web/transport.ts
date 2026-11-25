@@ -350,6 +350,11 @@ export class AcpTransport {
 		return this.call("/api/notebooks/local", {});
 	}
 
+	/** True once when the working copy must run on this first launch. */
+	async consumeNotebookBootstrap(): Promise<{ run: boolean }> {
+		return this.call("/api/notebooks/bootstrap", {});
+	}
+
 	async saveLocalTemplate(
 		frontMatter: TemplateFrontMatter,
 		prompts: string[],

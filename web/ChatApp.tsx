@@ -1664,6 +1664,52 @@ export function ChatApp(): React.ReactElement {
 		}
 	}, [executeNotebookNode]);
 
+	// One-shot launch bootstrap (trustant spec/21-lovable.md): on the first
+	// launch of an app that ships a working copy to run, load template.md, show
+	// it and run every step. The server consumes the flag on the first ask, so
+	// a reload never re-runs it.
+	const bootstrapCheckedRef = useRef(false);
+	const [bootstrapRunPending, setBootstrapRunPending] = useState(false);
+	useEffect(() => {
+		if (!ready || !sessionRef.current || bootstrapCheckedRef.current) return;
+		bootstrapCheckedRef.current = true;
+		void (async () => {
+			try {
+				const { run } = await transport.consumeNotebookBootstrap();
+				if (!run) return;
+				const local = await transport.loadLocalTemplate();
+				if (!local.exists || local.prompts.length === 0) return;
+				setLocalTemplate({
+					frontMatter: local.frontMatter,
+					prompts: local.prompts,
+				});
+				const nodes = nodesFromPrompts(local.prompts);
+				setNotebook({
+					version: 1,
+					source: { repository: "", ref: "" },
+					notebookName: local.frontMatter.name,
+					path: local.frontMatter.file,
+					fileSha: "",
+					readmeSha: "",
+					nodes,
+					selectedNodeId: nodes[0]?.id ?? null,
+					dirty: false,
+					template: local.frontMatter,
+				});
+				setNotebookPanelOpen(true);
+				setBootstrapRunPending(true);
+			} catch (e) {
+				setError(String((e as Error).message ?? e));
+			}
+		})();
+	}, [ready]);
+	useEffect(() => {
+		// Waits for the render that put the bootstrap notebook in notebookRef.
+		if (!bootstrapRunPending || !notebook || running) return;
+		setBootstrapRunPending(false);
+		void runAllNotebookNodes();
+	}, [bootstrapRunPending, notebook, running, runAllNotebookNodes]);
+
 	// WHY: editing happens in the node itself rather than in the composer, so
 	// starting an edit no longer moves text into the shared input; the composer
 	// stays free for ad-hoc prompts while a step is being edited.

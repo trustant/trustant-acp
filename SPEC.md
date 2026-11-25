@@ -1061,7 +1061,15 @@ configuration your github token to edit templates"*. The changed highlight
 appears regardless of the token, because that is how the user learns their edits
 are local-only.
 
-REST endpoints are `POST /api/notebooks/{index,load,select,remove,local}` and
+**Launch bootstrap.** When the managed host starts TruACP with
+`TRUSTANT_BOOTSTRAP_NOTEBOOK=1`, `POST /api/notebooks/bootstrap` answers
+`{run: true}` once per process (and only if `template.md` has steps); every later
+call answers `{run: false}`. On `run: true`, once the chat session is ready, the
+UI loads the working copy, opens the Templates panel and runs all steps. The
+host clears its own flag after starting TruACP, so neither a page reload nor a
+relaunch repeats it.
+
+REST endpoints are `POST /api/notebooks/{index,load,select,remove,local,bootstrap}` and
 `PUT /api/notebooks/{save-local,save-template}`. `save-template` takes the name
 and file only — prompts are read from `template.md` server-side, so a stale
 client cannot publish content the workbench never held, and it updates the

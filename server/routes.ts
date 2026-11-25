@@ -55,6 +55,7 @@ import { statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { NotebookGitHubService } from "./notebook-github";
 import {
+	consumeNotebookBootstrap,
 	readLocalTemplate,
 	sanitizeTemplateFrontMatter,
 	saveLocalTemplate,
@@ -366,6 +367,13 @@ export const routes = {
 	"POST /api/notebooks/local": async (
 		ctx: RouteContext,
 	): Promise<NotebookLocalResponse> => readLocalTemplate(ctx.host.projectDir()),
+
+	// One-shot: true exactly once per TruACP process when Trustant asked for the
+	// working copy to run on first launch. See consumeNotebookBootstrap.
+	"POST /api/notebooks/bootstrap": async (
+		ctx: RouteContext,
+	): Promise<{ run: boolean }> =>
+		consumeNotebookBootstrap(ctx.host.projectDir()),
 
 	/**
 	 * Copy a catalog entry into the workbench in one hop.
